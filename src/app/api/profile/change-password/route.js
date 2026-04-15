@@ -15,11 +15,11 @@ export async function POST(req) {
   const user = await prisma.user.findUnique({ where: { id: session.user.id } });
   if (!user) return NextResponse.json({ error: "User not found" }, { status: 404 });
 
-  const valid = await bcrypt.compare(current, user.password);
+  const valid = await bcrypt.compare(current, user.passwordHash);
   if (!valid) return NextResponse.json({ error: "Current password is incorrect" }, { status: 400 });
 
   const hashed = await bcrypt.hash(newPass, 10);
-  await prisma.user.update({ where: { id: user.id }, data: { password: hashed } });
+  await prisma.user.update({ where: { id: user.id }, data: { passwordHash: hashed } });
 
   return NextResponse.json({ ok: true });
 }
