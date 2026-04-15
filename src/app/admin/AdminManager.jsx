@@ -1,6 +1,6 @@
 "use client";
 import { useState } from "react";
-import { UserPlus, Pencil, Trash2, X, Check, Shield, CreditCard, Plus, Calendar, ChevronDown } from "lucide-react";
+import { UserPlus, Pencil, Trash2, X, Check, Shield, CreditCard, Plus } from "lucide-react";
 
 const btn = (bg, color = "#fff") => ({
   display: "inline-flex", alignItems: "center", gap: 5,
@@ -28,15 +28,44 @@ function Modal({ title, onClose, children }) {
   );
 }
 
+const emptyUserForm = { email: "", password: "", role: "USER" };
+
 export default function AdminManager({ users: initUsers, plans: initPlans }) {
   const [users, setUsers] = useState(initUsers);
   const [plans, setPlans] = useState(initPlans);
-  const [modal, setModal] = useState(null); // { type, data }
+  const [modal, setModal] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [msg, setMsg] = useState("");
+  const [msg, setMsg] = useState({ text: "", ok: true });
 
-  const flash = (m) => { setMsg(m); setTimeout(() => setMsg(""), 3000); };
+  const flash = (text, ok = true) => { setMsg({ text, ok }); setTimeout(() => setMsg({ text: "", ok: true }), 3500); };
   const close = () => setModal(null);
+
+  // ── Create / Edit user ───────────────────────────────────────────
+  const [userForm, setUserForm] = useState(emptyUserForm);
+
+  const openNewUser = () => { setUserForm(emptyUserForm); setModal({ type: "newUser" }); };
+  const openEditUser = (user) => { setUserForm({ email: user.email, password: "", role: user.role }); setModal({ type: "editUser", data: user }); };
+
+  const saveUser = async () => {
+    setLoading(true);
+    const isEdit = modal?.type === "editUser";
+    const url = isEdit ? `/api/admin/users/${modal.data.id}` : "/api/admin/users";
+    const body = isEdit
+      ? { action: "updateUser", email: userForm.email, role: userForm.role, ...(userForm.password ? { password: userForm.password } : {}) }
+      : { email: userForm.email, password: userForm.password, role: userForm.role };
+    const res = await fetch(url, { method: isEdit ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const data = await res.json();
+    setLoading(false);
+    if (!res.ok) { flash(data.error, false); return; }
+    if (isEdit) {
+      setUsers(u => u.map(u2 => u2.id === modal.data.id ? { ...u2, email: data.user.email, role: data.user.role } : u2));
+      flash("User updated.");
+    } else {
+      setUsers(u => [data.user, ...u]);
+      flash("User created.");
+    }
+    close();
+  };
 
   // ── Assign subscription ──────────────────────────────────────────
   const [subForm, setSubForm] = useState({ planId: "", durationDays: "30" });
@@ -50,8 +79,7 @@ export default function AdminManager({ users: initUsers, plans: initPlans }) {
     });
     const data = await res.json();
     setLoading(false);
-    if (!res.ok) { flash(data.error); return; }
-    // Update user in list
+    if (!res.ok) { flash(data.error, false); return; }
     setUsers(u => u.map(u2 => u2.id === modal.data.id
       ? { ...u2, subscriptions: [data.subscription, ...u2.subscriptions.filter(s => s.status !== "ACTIVE")] }
       : u2
@@ -78,7 +106,7 @@ export default function AdminManager({ users: initUsers, plans: initPlans }) {
     if (!confirm(`Delete user ${email}? This cannot be undone.`)) return;
     const res = await fetch(`/api/admin/users/${userId}`, { method: "DELETE" });
     const data = await res.json();
-    if (!res.ok) { flash(data.error); return; }
+    if (!res.ok) { flash(data.error, false); return; }
     setUsers(u => u.filter(u2 => u2.id !== userId));
     flash("User deleted.");
   };
@@ -107,14 +135,10 @@ export default function AdminManager({ users: initUsers, plans: initPlans }) {
     setLoading(true);
     const isEdit = modal?.type === "editPlan";
     const url = isEdit ? `/api/admin/plans/${modal.data.id}` : "/api/admin/plans";
-    const res = await fetch(url, {
-      method: isEdit ? "PATCH" : "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(planForm),
-    });
+    const res = await fetch(url, { method: isEdit ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(planForm) });
     const data = await res.json();
     setLoading(false);
-    if (!res.ok) { flash(data.error); return; }
+    if (!res.ok) { flash(data.error, false); return; }
     if (isEdit) setPlans(p => p.map(pl => pl.id === modal.data.id ? data.plan : pl));
     else setPlans(p => [...p, data.plan]);
     flash(isEdit ? "Plan updated." : "Plan created.");
@@ -124,20 +148,12 @@ export default function AdminManager({ users: initUsers, plans: initPlans }) {
   const deletePlan = async (planId) => {
     if (!confirm("Delete this plan? Existing subscriptions won't be affected.")) return;
     const res = await fetch(`/api/admin/plans/${planId}`, { method: "DELETE" });
-    if (res.ok) {
-      setPlans(p => p.filter(pl => pl.id !== planId));
-      flash("Plan deleted.");
-    }
+    if (res.ok) { setPlans(p => p.filter(pl => pl.id !== planId)); flash("Plan deleted."); }
   };
 
   const openEditPlan = (plan) => {
     setPlanForm({ name: plan.name, durationDiv: plan.durationDiv, price: String(plan.price), description: plan.description || "" });
     setModal({ type: "editPlan", data: plan });
-  };
-
-  const openNewPlan = () => {
-    setPlanForm({ name: "", durationDiv: "MONTH", price: "", description: "" });
-    setModal({ type: "newPlan" });
   };
 
   const s = {
@@ -150,9 +166,9 @@ export default function AdminManager({ users: initUsers, plans: initPlans }) {
   return (
     <>
       {/* Flash message */}
-      {msg && (
-        <div style={{ position: "fixed", top: 20, right: 20, zIndex: 9999, background: "var(--green-bg)", border: "1px solid var(--green-bd)", color: "var(--green)", padding: "10px 18px", borderRadius: 8, fontSize: 13, fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>
-          <Check size={14} /> {msg}
+      {msg.text && (
+        <div style={{ position: "fixed", top: 20, right: 20, zIndex: 9999, background: msg.ok ? "var(--green-bg)" : "var(--red-bg)", border: `1px solid ${msg.ok ? "var(--green-bd)" : "var(--red-bd)"}`, color: msg.ok ? "var(--green)" : "var(--red)", padding: "10px 18px", borderRadius: 8, fontSize: 13, fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>
+          <Check size={14} /> {msg.text}
         </div>
       )}
 
@@ -161,7 +177,8 @@ export default function AdminManager({ users: initUsers, plans: initPlans }) {
         {/* ── Users ── */}
         <div style={s.card}>
           <div style={s.sectionTitle}>
-            <span style={{ display: "flex", alignItems: "center", gap: 8 }}>👥 Users ({users.length})</span>
+            <span>👥 Users ({users.length})</span>
+            <button onClick={openNewUser} style={btn("var(--accent)")}><UserPlus size={11} /> Add User</button>
           </div>
           {users.map(user => {
             const sub = user.subscriptions?.[0];
@@ -173,27 +190,23 @@ export default function AdminManager({ users: initUsers, plans: initPlans }) {
                   <div style={{ fontSize: 11, color: "var(--text-d)", marginBottom: 4 }}>
                     Joined {new Date(user.createdAt).toLocaleDateString()}
                   </div>
-                  {isActive && (
-                    <div style={{ fontSize: 11, color: "var(--text-m)", display: "flex", alignItems: "center", gap: 5 }}>
+                  {isActive ? (
+                    <div style={{ fontSize: 11, color: "var(--text-m)", display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
                       <span style={s.tag("var(--green)", "var(--green-bg)")}>ACTIVE</span>
                       {sub.plan?.name} · expires {new Date(sub.endDate).toLocaleDateString()}
                       <button onClick={() => cancelSub(sub.id, user.id)} style={{ ...btn("var(--red-bg)", "var(--red)"), padding: "1px 6px", fontSize: 10 }}>Cancel</button>
                     </div>
+                  ) : (
+                    <span style={s.tag("var(--text-d)", "var(--bg3)")}>No subscription</span>
                   )}
-                  {!isActive && <span style={s.tag("var(--text-d)", "var(--bg3)")}>No subscription</span>}
                 </div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 5, alignItems: "flex-end", marginLeft: 10 }}>
                   <span style={s.tag(user.role === "ADMIN" ? "var(--amber)" : "var(--blue)", user.role === "ADMIN" ? "var(--amber-bg)" : "var(--blue-bg)")}>{user.role}</span>
                   <div style={{ display: "flex", gap: 4 }}>
-                    <button onClick={() => { setSubForm({ planId: plans[0]?.id || "", durationDays: "30" }); setModal({ type: "assignSub", data: user }); }} style={btn("var(--purple-bg)", "var(--accent)")} title="Assign Subscription">
-                      <CreditCard size={11} />
-                    </button>
-                    <button onClick={() => setRole(user.id, user.role === "ADMIN" ? "USER" : "ADMIN")} style={btn("var(--amber-bg)", "var(--amber)")} title="Toggle Role">
-                      <Shield size={11} />
-                    </button>
-                    <button onClick={() => deleteUser(user.id, user.email)} style={btn("var(--red-bg)", "var(--red)")} title="Delete User">
-                      <Trash2 size={11} />
-                    </button>
+                    <button onClick={() => openEditUser(user)} style={btn("var(--blue-bg)", "var(--blue)")} title="Edit User"><Pencil size={11} /></button>
+                    <button onClick={() => { setSubForm({ planId: plans[0]?.id || "", durationDays: "30" }); setModal({ type: "assignSub", data: user }); }} style={btn("var(--purple-bg)", "var(--accent)")} title="Assign Subscription"><CreditCard size={11} /></button>
+                    <button onClick={() => setRole(user.id, user.role === "ADMIN" ? "USER" : "ADMIN")} style={btn("var(--amber-bg)", "var(--amber)")} title="Toggle Role"><Shield size={11} /></button>
+                    <button onClick={() => deleteUser(user.id, user.email)} style={btn("var(--red-bg)", "var(--red)")} title="Delete User"><Trash2 size={11} /></button>
                   </div>
                 </div>
               </div>
@@ -204,8 +217,8 @@ export default function AdminManager({ users: initUsers, plans: initPlans }) {
         {/* ── Plans ── */}
         <div style={s.card}>
           <div style={s.sectionTitle}>
-            <span style={{ display: "flex", alignItems: "center", gap: 8 }}>📦 Plans ({plans.length})</span>
-            <button onClick={openNewPlan} style={btn("var(--green)", "#fff")}><Plus size={11} /> New Plan</button>
+            <span>📦 Plans ({plans.length})</span>
+            <button onClick={() => { setPlanForm({ name: "", durationDiv: "MONTH", price: "", description: "" }); setModal({ type: "newPlan" }); }} style={btn("var(--green)")}><Plus size={11} /> New Plan</button>
           </div>
           {plans.length === 0 && <div style={{ color: "var(--text-d)", fontSize: 12 }}>No plans yet.</div>}
           {plans.map(plan => (
@@ -223,6 +236,36 @@ export default function AdminManager({ users: initUsers, plans: initPlans }) {
           ))}
         </div>
       </div>
+
+      {/* ── Create / Edit User Modal ── */}
+      {(modal?.type === "newUser" || modal?.type === "editUser") && (
+        <Modal title={modal.type === "editUser" ? `Edit — ${modal.data.email}` : "Add New User"} onClose={close}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            <div>
+              <label style={labelStyle}>Email</label>
+              <input type="email" value={userForm.email} onChange={e => setUserForm(f => ({ ...f, email: e.target.value }))} style={inputStyle} placeholder="user@example.com" required />
+            </div>
+            <div>
+              <label style={labelStyle}>{modal.type === "editUser" ? "New Password (leave blank to keep current)" : "Password"}</label>
+              <input type="password" value={userForm.password} onChange={e => setUserForm(f => ({ ...f, password: e.target.value }))} style={inputStyle} placeholder={modal.type === "editUser" ? "Leave blank to keep unchanged" : "Min 8 characters"} />
+            </div>
+            <div>
+              <label style={labelStyle}>Role</label>
+              <select value={userForm.role} onChange={e => setUserForm(f => ({ ...f, role: e.target.value }))} style={inputStyle}>
+                <option value="USER">USER</option>
+                <option value="ADMIN">ADMIN</option>
+              </select>
+            </div>
+            <button
+              onClick={saveUser}
+              disabled={loading || !userForm.email || (modal.type === "newUser" && !userForm.password)}
+              style={{ ...btn("var(--accent)"), width: "100%", justifyContent: "center", padding: "10px 0", fontSize: 13, opacity: loading ? 0.7 : 1 }}
+            >
+              {loading ? "Saving…" : modal.type === "editUser" ? "Save Changes" : "Create User"}
+            </button>
+          </div>
+        </Modal>
+      )}
 
       {/* ── Assign Subscription Modal ── */}
       {modal?.type === "assignSub" && (
@@ -275,7 +318,7 @@ export default function AdminManager({ users: initUsers, plans: initPlans }) {
             </div>
             <div>
               <label style={labelStyle}>Description</label>
-              <input value={planForm.description} onChange={e => setPlanForm(f => ({ ...f, description: e.target.value }))} style={inputStyle} placeholder="Optional description" />
+              <input value={planForm.description} onChange={e => setPlanForm(f => ({ ...f, description: e.target.value }))} style={inputStyle} placeholder="Optional" />
             </div>
             <button onClick={savePlan} disabled={loading || !planForm.name || !planForm.price} style={{ ...btn("var(--accent)"), width: "100%", justifyContent: "center", padding: "10px 0", fontSize: 13, opacity: loading ? 0.7 : 1 }}>
               {loading ? "Saving…" : modal.type === "editPlan" ? "Save Changes" : "Create Plan"}

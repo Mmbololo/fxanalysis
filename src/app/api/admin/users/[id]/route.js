@@ -1,6 +1,7 @@
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import prisma from "@/lib/prisma";
+import bcrypt from "bcryptjs";
 import { NextResponse } from "next/server";
 
 async function requireAdmin() {
@@ -9,13 +10,25 @@ async function requireAdmin() {
   return session;
 }
 
-// PATCH: update role or assign subscription
+// PATCH: update user details, role, or assign subscription
 export async function PATCH(req, { params }) {
   const session = await requireAdmin();
   if (!session) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const { id } = await params;
   const body = await req.json();
+
+  if (body.action === "updateUser") {
+    const { email, password, role } = body;
+    const existing = email && await prisma.user.findFirst({ where: { email, NOT: { id } } });
+    if (existing) return NextResponse.json({ error: "Email already in use" }, { status: 409 });
+    const data = {};
+    if (email) data.email = email;
+    if (role) data.role = role;
+    if (password) data.passwordHash = await bcrypt.hash(password, 10);
+    const user = await prisma.user.update({ where: { id }, data });
+    return NextResponse.json({ ok: true, user: { id: user.id, email: user.email, role: user.role } });
+  }
 
   if (body.action === "setRole") {
     const user = await prisma.user.update({
@@ -51,7 +64,7 @@ export async function PATCH(req, { params }) {
 }
 
 // DELETE: remove user
-export async function DELETE(req, { params }) {
+export async function DELETE(_, { params }) {
   const session = await requireAdmin();
   if (!session) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
