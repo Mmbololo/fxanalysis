@@ -598,7 +598,7 @@ Return ONLY valid JSON (no markdown):
   const inst = liveInstruments[sel];
   const isLive = Object.keys(liveData).length > 0;
   const s = {
-    root: { minHeight: "100vh", background: T.bg, color: T.text, fontFamily: "'Geist','SF Pro Display',-apple-system,sans-serif" },
+    root: { minHeight: "100vh", background: T.bg, color: T.text, fontFamily: "var(--font-maven-pro), sans-serif" },
     hdr: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 24px", borderBottom: `1px solid ${T.border}`, background: T.bg2 },
     nav: { display: "flex", gap: 2, padding: "0 24px", background: T.bg2, borderBottom: `1px solid ${T.border}`, overflowX: "auto" },
     ni: a => ({ padding: "11px 14px", fontSize: 12, fontWeight: a ? 600 : 400, color: a ? T.accent : T.textM, cursor: "pointer", border: "none", background: "none", borderBottom: a ? `2px solid ${T.accent}` : "2px solid transparent", display: "flex", alignItems: "center", gap: 5, whiteSpace: "nowrap" }),
@@ -611,7 +611,7 @@ Return ONLY valid JSON (no markdown):
     ct: { fontSize: 12, fontWeight: 600, color: T.textM, marginBottom: 14, textTransform: "uppercase", letterSpacing: 0.8, display: "flex", alignItems: "center", gap: 8 },
     tb: { width: "100%", borderCollapse: "collapse", fontSize: 12 },
     th: { textAlign: "left", color: T.textD, fontWeight: 400, padding: "5px 8px", fontSize: 11, borderBottom: `1px solid ${T.border}`, textTransform: "uppercase", letterSpacing: 0.4 },
-    td: { padding: "7px 8px", borderBottom: `1px solid ${T.border}`, fontFamily: "'JetBrains Mono',monospace", fontSize: 12 },
+    td: { padding: "7px 8px", borderBottom: `1px solid ${T.border}`, fontFamily: "'JetBrains Mono', monospace", fontSize: 12 },
     sr: t => ({ display: "flex", alignItems: "flex-start", gap: 10, padding: "9px 13px", borderRadius: 8, background: SigBg(t), border: `1px solid ${SigBd(t)}`, marginBottom: 7, fontSize: 13, lineHeight: 1.5 }),
     btn: (bg, c) => ({ padding: "8px 16px", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer", background: bg, color: c, border: "none", display: "flex", alignItems: "center", gap: 6 }),
   };

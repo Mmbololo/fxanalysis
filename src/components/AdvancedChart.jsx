@@ -35,7 +35,7 @@ export default function AdvancedChart({ instrumentKey, data, news }) {
         background: { type: ColorType.Solid, color: T.bg },
         textColor: T.textM,
         fontSize: 11,
-        fontFamily: "'Geist', sans-serif",
+        fontFamily: "'Maven Pro', sans-serif",
       },
       grid: {
         vertLines: { color: "rgba(30, 45, 69, 0.4)" },

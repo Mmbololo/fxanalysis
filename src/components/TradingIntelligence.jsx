@@ -400,7 +400,7 @@ Search for today's latest news and data on ${label}. Return ONLY JSON:
   };
 
   return (
-    <div style={{ fontFamily: "'Geist','SF Pro Display',-apple-system,sans-serif", color: C.text }}>
+    <div style={{ fontFamily: "var(--font-maven-pro), sans-serif", color: C.text }}>
 
       {/* Header */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>

@@ -37,7 +37,7 @@ export default async function AdminDashboard() {
   const activeSubscriptions = users.filter(u => u.subscriptions[0]?.status === "ACTIVE").length;
 
   const s = {
-    root: { minHeight: "100vh", background: "var(--bg)", color: "var(--text)", fontFamily: "'Geist','SF Pro Display',-apple-system,sans-serif" },
+    root: { minHeight: "100vh", background: "var(--bg)", color: "var(--text)", fontFamily: "var(--font-maven-pro), sans-serif" },
     header: { display: "flex", alignItems: "center", gap: 12, padding: "20px 32px", borderBottom: "1px solid var(--border)", background: "var(--bg2)" },
     main: { maxWidth: 1200, margin: "0 auto", padding: "28px 32px" },
     card: { background: "var(--bg2)", borderRadius: 12, padding: 20, border: "1px solid var(--border)" },

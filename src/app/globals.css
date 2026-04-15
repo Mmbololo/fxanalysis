@@ -39,7 +39,7 @@ body {
   overflow-x: hidden;
   background-color: var(--bg);
   color: var(--text);
-  font-family: 'Geist', 'SF Pro Display', -apple-system, sans-serif;
+  font-family: var(--font-maven-pro), 'SF Pro Display', -apple-system, sans-serif;
 }
 
 a {

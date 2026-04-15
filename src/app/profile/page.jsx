@@ -36,7 +36,7 @@ export default async function ProfilePage() {
   const winRate = closedSignals.length > 0 ? ((wins / closedSignals.length) * 100).toFixed(0) : null;
 
   const s = {
-    root: { minHeight: "100vh", background: "var(--bg)", color: "var(--text)", fontFamily: "'Geist','SF Pro Display',-apple-system,sans-serif" },
+    root: { minHeight: "100vh", background: "var(--bg)", color: "var(--text)", fontFamily: "var(--font-maven-pro), sans-serif" },
     header: { display: "flex", alignItems: "center", gap: 12, padding: "16px 32px", borderBottom: "1px solid var(--border)", background: "var(--bg2)" },
     main: { maxWidth: 720, margin: "0 auto", padding: "32px 24px" },
     card: { background: "var(--bg2)", borderRadius: 12, padding: 24, border: "1px solid var(--border)", marginBottom: 20 },
