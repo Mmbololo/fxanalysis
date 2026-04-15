@@ -4,6 +4,10 @@ import { signOut, useSession } from "next-auth/react";
 import Link from "next/link";
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Area, AreaChart, ComposedChart, Cell } from "recharts";
 import { TrendingUp, TrendingDown, Activity, BarChart3, Brain, BookOpen, RefreshCw, AlertTriangle, Target, Shield, Zap, Plus, Trash2, ArrowUpRight, ArrowDownRight, Clock, Database, Crosshair, Layers, Radio, ExternalLink, LogOut, User } from "lucide-react";
+import ChatAssistant from "./chat-assistant";
+import AdvancedChart from "./AdvancedChart";
+import TradePanel from "./TradePanel";
+
 
 const T = {
   bg: "#0a0e17", bg2: "#111827", bg3: "#1a2235", bg4: "#243049",
@@ -379,9 +383,15 @@ const MetricCard = ({ label, value, sub, subColor, icon: Icon }) => (
   </div>
 );
 
-const VIEWS = ["overview", "cot", "sentiment", "orderflow", "strategy", "signals", "journal"];
-const VIEW_LABELS = { overview: "Overview", cot: "COT analysis", sentiment: "Sentiment", orderflow: "Order flow", strategy: "Strategy", signals: "Signals & Performance", journal: "Journal" };
-const VIEW_ICONS = { overview: BarChart3, cot: Database, sentiment: Brain, orderflow: Layers, strategy: Crosshair, signals: Target, journal: BookOpen };
+const VIEWS = ["overview", "charts", "cot", "sentiment", "orderflow", "strategy", "signals", "journal"];
+const VIEW_LABELS = { 
+  overview: "Overview", charts: "Intelligent Chart", cot: "COT Data", sentiment: "Sentiment", orderflow: "Order Flow", 
+  strategy: "Master Strategy", signals: "Signals", journal: "Trade Journal" 
+};
+const VIEW_ICONS = { 
+  overview: Activity, charts: Crosshair, cot: BarChart3, sentiment: Brain, orderflow: Radio, 
+  strategy: Target, signals: Zap, journal: BookOpen 
+};
 
 export default function TradingDashboard() {
   if (typeof window !== "undefined" && !window.storage) {
@@ -402,6 +412,8 @@ export default function TradingDashboard() {
   const [lastRef, setLastRef] = useState(null);
   const [liveData, setLiveData] = useState({});
   const [livePulse, setLivePulse] = useState(false);
+  const [intelData, setIntelData] = useState(null);
+
 
   const fetchPrices = useCallback(async () => {
     try {
@@ -417,8 +429,16 @@ export default function TradingDashboard() {
   useEffect(() => {
     fetchPrices();
     const id = setInterval(fetchPrices, 10000);
+    
+    // Fetch intelligence data for AI context
+    fetch("/api/intelligence")
+      .then(res => res.json())
+      .then(data => setIntelData(data))
+      .catch(err => console.error("Intel fetch error:", err));
+
     return () => clearInterval(id);
   }, [fetchPrices]);
+
 
   useEffect(() => {
     (async () => {
@@ -599,6 +619,47 @@ Return ONLY valid JSON (no markdown):
   if (loading) return (<div style={{ ...s.root, display: "flex", alignItems: "center", justifyContent: "center" }}><div style={{ textAlign: "center" }}><RefreshCw size={28} style={{ color: T.accent, animation: "spin 1s linear infinite" }} /><div style={{ marginTop: 10, color: T.textM, fontSize: 13 }}>Loading...</div><style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style></div></div>);
 
   const priceStr = i => ["XAUUSD","BTCUSD"].includes(i.name) ? `$${i.price.toLocaleString()}` : i.price.toFixed(i.name === "GBPJPY" ? 2 : 4);
+
+  const renderCharts = () => {
+    if (!intelData || !intelData.instruments[sel]) return (
+      <div style={{ height: 500, display: "flex", alignItems: "center", justifyContent: "center", color: T.textD }}>
+        <RefreshCw size={24} style={{ animation: "spin 2s linear infinite", marginRight: 10 }} />
+        Synchronizing Chart Engine...
+      </div>
+    );
+
+    return (
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 340px", gap: 20 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <AdvancedChart 
+            instrumentKey={sel} 
+            data={intelData.instruments[sel]} 
+            news={intelData.news}
+          />
+          {/* Bottom stats row for charts view */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
+            {[
+              { label: "Trend", value: intelData.instruments[sel].trend, icon: <TrendingUp size={14}/>, color: T.purple },
+              { label: "RSI", value: intelData.instruments[sel].rsi, icon: <Activity size={14}/>, color: T.cyan },
+              { label: "ATR", value: intelData.instruments[sel].atr?.toFixed(4), icon: <Layers size={14}/>, color: T.textM },
+              { label: "Structure", value: intelData.instruments[sel].structure, icon: <Zap size={14}/>, color: T.amber },
+            ].map(s => (
+              <div key={s.label} style={{ background: T.bg2, padding: "12px 16px", borderRadius: 12, border: `1px solid ${T.border}`, display: "flex", alignItems: "center", gap: 10 }}>
+                <div style={{ color: s.color }}>{s.icon}</div>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: s.color }}>{s.value}</div>
+                  <div style={{ fontSize: 9, color: T.textD, textTransform: "uppercase" }}>{s.label}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div>
+          <TradePanel selectedInstrument={sel} instrumentData={intelData.instruments[sel]} />
+        </div>
+      </div>
+    );
+  };
 
   const renderOverview = () => (<>
     <div style={s.g4}>{Object.values(liveInstruments).map(i => (
@@ -1099,6 +1160,7 @@ Return ONLY valid JSON (no markdown):
       {view!=="overview"&&view!=="signals"&&view!=="journal"&&<div style={s.ib}>{Object.keys(INSTRUMENTS).map(k=><div key={k} style={s.ic(sel===k)} onClick={()=>setSel(k)}>{k}</div>)}</div>}
       <main style={s.mn}>
         {view==="overview"&&renderOverview()}
+        {view==="charts"&&renderCharts()}
         {view==="cot"&&renderCOT()}
         {view==="sentiment"&&renderSentiment()}
         {view==="orderflow"&&renderOrderFlow()}
@@ -1107,6 +1169,8 @@ Return ONLY valid JSON (no markdown):
         {view==="journal"&&renderJournal()}
       </main>
       <footer style={{padding:"14px 24px",borderTop:`1px solid ${T.border}`,textAlign:"center",fontSize:10,color:T.textD}}>CFTC COT · Myfxbook · DailyFX · InvestingLive (ForexLive) · Not financial advice.</footer>
+      <ChatAssistant selectedInstrument={sel} intelligenceData={intelData} />
     </div>
+
   );
 }
