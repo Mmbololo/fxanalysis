@@ -26,6 +26,14 @@ export default function AdvancedChart({ instrumentKey, data, news }) {
   const volumeSeriesRef = useRef();
   const [timeframe, setTimeframe] = useState("1d");
   const [isExpanded, setIsExpanded] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    const checkMobile = () => setIsMobile(window.innerWidth < 768);
+    checkMobile();
+    window.addEventListener("resize", checkMobile);
+    return () => window.removeEventListener("resize", checkMobile);
+  }, []);
 
   useEffect(() => {
     if (!data?.fullSeries) return;
@@ -226,7 +234,7 @@ export default function AdvancedChart({ instrumentKey, data, news }) {
       {/* Main Chart Area */}
       <div 
         ref={chartContainerRef} 
-        style={{ width: "100%", height: isExpanded ? 700 : 450, position: "relative" }} 
+        style={{ width: "100%", height: isExpanded ? 700 : isMobile ? 320 : 450, position: "relative" }} 
       />
 
       {/* Dynamic Overlays (Floating Legends) */}
@@ -248,20 +256,19 @@ export default function AdvancedChart({ instrumentKey, data, news }) {
       {/* Intelligence Layer Commentary */}
       {data?.signal && !isExpanded && (
         <div style={{ 
-          position: "absolute", bottom: 16, left: 16, right: 16, zIndex: 10,
-          background: "rgba(17, 24, 39, 0.7)", backdropFilter: "blur(8px)",
-          padding: "10px 14px", borderRadius: 12, border: `1px solid ${T.purple}40`,
+          position: "absolute", bottom: isMobile ? 8 : 16, left: isMobile ? 8 : 16, right: isMobile ? 8 : 16, zIndex: 10,
+          background: "rgba(17, 24, 39, 0.85)", backdropFilter: "blur(10px)",
+          padding: isMobile ? "8px 10px" : "10px 14px", borderRadius: 12, border: `1px solid ${T.purple}40`,
           display: "flex", alignItems: "center", gap: 12
         }}>
-          <div style={{ width: 32, height: 32, borderRadius: 8, background: `${T.purple}20`, display: "flex", alignItems: "center", justifyContent: "center", color: T.purple }}>
+          <div style={{ width: 32, height: 32, borderRadius: 8, background: `${T.purple}20`, display: "flex", alignItems: "center", justifyContent: "center", color: T.purple, flexShrink: 0 }}>
             <Zap size={18} />
           </div>
           <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 10, color: T.purple, fontWeight: 800, textTransform: "uppercase" }}>AI Commentary</div>
-            <div style={{ fontSize: 12, color: T.text, fontWeight: 500, lineHeight: 1.4 }}>
-              The system identifies a strong {data.signal.direction} bias. 
-              {data.trend === "BULLISH" ? " Momentum is accelerating above SMA50." : " Price is facing overhead resistance."} 
-              Risk-reward ratio of {data.signal.rr} is highly favorable.
+            <div style={{ fontSize: 9, color: T.purple, fontWeight: 800, textTransform: "uppercase" }}>AI Commentary</div>
+            <div style={{ fontSize: isMobile ? 11 : 12, color: T.text, fontWeight: 500, lineHeight: 1.4 }}>
+              {isMobile ? data.signal.direction + " bias identified." : `The system identifies a strong ${data.signal.direction} bias.`} 
+              {data.trend === "BULLISH" ? " Breakout confirmed." : " Facing resistance."}
             </div>
           </div>
         </div>

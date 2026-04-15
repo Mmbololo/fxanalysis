@@ -599,14 +599,14 @@ Return ONLY valid JSON (no markdown):
   const isLive = Object.keys(liveData).length > 0;
   const s = {
     root: { minHeight: "100vh", background: T.bg, color: T.text, fontFamily: "var(--font-maven-pro), sans-serif" },
-    hdr: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 24px", borderBottom: `1px solid ${T.border}`, background: T.bg2 },
-    nav: { display: "flex", gap: 2, padding: "0 24px", background: T.bg2, borderBottom: `1px solid ${T.border}`, overflowX: "auto" },
+    hdr: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px clamp(16px, 4vw, 24px)", borderBottom: `1px solid ${T.border}`, background: T.bg2, flexWrap: "wrap", gap: 10 },
+    nav: { display: "flex", gap: 2, padding: "0 clamp(16px, 4vw, 24px)", background: T.bg2, borderBottom: `1px solid ${T.border}`, overflowX: "auto", scrollbarWidth: "none" },
     ni: a => ({ padding: "11px 14px", fontSize: 12, fontWeight: a ? 600 : 400, color: a ? T.accent : T.textM, cursor: "pointer", border: "none", background: "none", borderBottom: a ? `2px solid ${T.accent}` : "2px solid transparent", display: "flex", alignItems: "center", gap: 5, whiteSpace: "nowrap" }),
     ib: { display: "flex", gap: 6, padding: "12px 24px", flexWrap: "wrap" },
     ic: a => ({ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: 500, cursor: "pointer", border: `1px solid ${a ? T.accent : T.border}`, background: a ? T.purpleBg : T.bg2, color: a ? T.accent : T.textM }),
-    mn: { padding: "18px 24px", maxWidth: 1200, margin: "0 auto" },
-    g4: { display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12, marginBottom: 18 },
-    g2: { display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 14, marginBottom: 18 },
+    mn: { padding: "clamp(12px, 3vw, 24px)", width: "100%", boxSizing: "border-box" },
+    g4: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 250px), 1fr))", gap: 12, marginBottom: 18 },
+    g2: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 450px), 1fr))", gap: 14, marginBottom: 18 },
     cd: { background: T.bg2, borderRadius: 12, padding: 18, border: `1px solid ${T.border}` },
     ct: { fontSize: 12, fontWeight: 600, color: T.textM, marginBottom: 14, textTransform: "uppercase", letterSpacing: 0.8, display: "flex", alignItems: "center", gap: 8 },
     tb: { width: "100%", borderCollapse: "collapse", fontSize: 12 },
@@ -629,7 +629,7 @@ Return ONLY valid JSON (no markdown):
     );
 
     return (
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 340px", gap: 20 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 340px), 1fr))", gap: 20 }}>
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           <AdvancedChart 
             instrumentKey={sel} 

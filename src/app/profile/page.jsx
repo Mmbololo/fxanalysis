@@ -37,12 +37,12 @@ export default async function ProfilePage() {
 
   const s = {
     root: { minHeight: "100vh", background: "var(--bg)", color: "var(--text)", fontFamily: "var(--font-maven-pro), sans-serif" },
-    header: { display: "flex", alignItems: "center", gap: 12, padding: "16px 32px", borderBottom: "1px solid var(--border)", background: "var(--bg2)" },
-    main: { maxWidth: 720, margin: "0 auto", padding: "32px 24px" },
-    card: { background: "var(--bg2)", borderRadius: 12, padding: 24, border: "1px solid var(--border)", marginBottom: 20 },
+    header: { display: "flex", alignItems: "center", gap: 12, padding: "16px clamp(16px, 4vw, 32px)", borderBottom: "1px solid var(--border)", background: "var(--bg2)", flexWrap: "wrap" },
+    main: { width: "100%", padding: "32px clamp(16px, 4vw, 24px)", boxSizing: "border-box" },
+    card: { background: "var(--bg2)", borderRadius: 12, padding: 24, border: "1px solid var(--border)", marginBottom: 20, overflowX: "auto" },
     label: { fontSize: 11, color: "var(--text-d)", textTransform: "uppercase", letterSpacing: "0.6px", marginBottom: 4 },
     value: { fontSize: 15, fontWeight: 600 },
-    row: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: "1px solid var(--border)" },
+    row: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: "1px solid var(--border)", flexWrap: "wrap", gap: 10 },
   };
 
   return (
@@ -78,7 +78,7 @@ export default async function ProfilePage() {
               </div>
             </div>
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 16 }}>
             <div style={{ background: "var(--bg)", borderRadius: 10, padding: "12px 16px", border: "1px solid var(--border)" }}>
               <div style={s.label}>Total Signals</div>
               <div style={{ fontSize: 24, fontWeight: 700, color: "var(--accent)" }}>{user.signals.length}</div>

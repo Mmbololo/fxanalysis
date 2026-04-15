@@ -39,11 +39,11 @@ export default async function AdminDashboard() {
   const s = {
     root: { minHeight: "100vh", background: "var(--bg)", color: "var(--text)", fontFamily: "var(--font-maven-pro), sans-serif" },
     header: { display: "flex", alignItems: "center", gap: 12, padding: "20px 32px", borderBottom: "1px solid var(--border)", background: "var(--bg2)" },
-    main: { maxWidth: 1200, margin: "0 auto", padding: "28px 32px" },
-    card: { background: "var(--bg2)", borderRadius: 12, padding: 20, border: "1px solid var(--border)" },
+    main: { width: "100%", padding: "28px clamp(16px, 4vw, 32px)", boxSizing: "border-box" },
+    card: { background: "var(--bg2)", borderRadius: 12, padding: 20, border: "1px solid var(--border)", overflowX: "auto" },
     statCard: { background: "var(--bg2)", borderRadius: 12, padding: 20, border: "1px solid var(--border)", textAlign: "center" },
     sectionTitle: { fontSize: 13, fontWeight: 600, color: "var(--text-m)", textTransform: "uppercase", letterSpacing: "0.8px", marginBottom: 14, display: "flex", alignItems: "center", gap: 8 },
-    row: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 14px", background: "var(--bg)", borderRadius: 8, border: "1px solid var(--border)", marginBottom: 8 },
+    row: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 14px", background: "var(--bg)", borderRadius: 8, border: "1px solid var(--border)", marginBottom: 8, flexWrap: "wrap", gap: 8 },
     tag: (color, bg) => ({ fontSize: 11, padding: "3px 8px", borderRadius: 4, fontWeight: 600, color, background: bg }),
     th: { textAlign: "left", color: "var(--text-d)", fontWeight: 400, padding: "5px 10px", fontSize: 11, borderBottom: "1px solid var(--border)", textTransform: "uppercase", letterSpacing: "0.4px" },
     td: { padding: "9px 10px", borderBottom: "1px solid var(--border)", fontSize: 12 },
@@ -71,7 +71,7 @@ export default async function AdminDashboard() {
       <main style={s.main}>
 
         {/* Summary stats */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 14, marginBottom: 24 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 14, marginBottom: 24 }}>
           {[
             { label: "Total Users", value: users.length, color: "var(--blue)" },
             { label: "Active Subscriptions", value: activeSubscriptions, color: "var(--green)" },
