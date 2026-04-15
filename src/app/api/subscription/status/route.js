@@ -9,6 +9,11 @@ export async function GET() {
     return NextResponse.json({ active: false });
   }
 
+  // Admins always have full access
+  if (session.user.role === "ADMIN") {
+    return NextResponse.json({ active: true, plan: "Admin", endDate: null, role: "ADMIN" });
+  }
+
   const now = new Date();
   const subscription = await prisma.subscription.findFirst({
     where: {
@@ -23,5 +28,6 @@ export async function GET() {
     active: !!subscription,
     plan: subscription?.plan?.name ?? null,
     endDate: subscription?.endDate ?? null,
+    role: session.user.role,
   });
 }

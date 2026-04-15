@@ -35,13 +35,13 @@ export default function LoginPage() {
         <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           <div>
             <label style={{ display: "block", fontSize: 12, color: "var(--text-m)", marginBottom: 4 }}>Email</label>
-            <input type="email" required value={email} onChange={e => setEmail(e.target.value)} style={{ width: "100%", padding: 10, borderRadius: 8, background: "var(--bg)", border: "1px solid var(--border)", color: "var(--text)" }} />
+            <input suppressHydrationWarning type="email" required value={email} onChange={e => setEmail(e.target.value)} style={{ width: "100%", padding: 10, borderRadius: 8, background: "var(--bg)", border: "1px solid var(--border)", color: "var(--text)" }} />
           </div>
           <div>
             <label style={{ display: "block", fontSize: 12, color: "var(--text-m)", marginBottom: 4 }}>Password</label>
-            <input type="password" required value={password} onChange={e => setPassword(e.target.value)} style={{ width: "100%", padding: 10, borderRadius: 8, background: "var(--bg)", border: "1px solid var(--border)", color: "var(--text)" }} />
+            <input suppressHydrationWarning type="password" required value={password} onChange={e => setPassword(e.target.value)} style={{ width: "100%", padding: 10, borderRadius: 8, background: "var(--bg)", border: "1px solid var(--border)", color: "var(--text)" }} />
           </div>
-          <button type="submit" className="btn-primary" style={{ marginTop: 10 }}>Sign In</button>
+          <button suppressHydrationWarning type="submit" className="btn-primary" style={{ marginTop: 10 }}>Sign In</button>
         </form>
         <div style={{ marginTop: 20, textAlign: "center", fontSize: 13, color: "var(--text-m)" }}>
           Don't have an account? <Link href="/register" style={{ color: "var(--accent)" }}>Register</Link>

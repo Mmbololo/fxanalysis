@@ -2,9 +2,10 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import { redirect } from "next/navigation";
-import { Shield, Users, CreditCard, Package, CheckCircle, User } from "lucide-react";
+import { Shield, CreditCard, CheckCircle, User } from "lucide-react";
 import LogoutButton from "@/components/LogoutButton";
 import Link from "next/link";
+import AdminManager from "./AdminManager";
 
 export default async function AdminDashboard() {
   const session = await getServerSession(authOptions);
@@ -15,7 +16,7 @@ export default async function AdminDashboard() {
 
   const users = await prisma.user.findMany({
     include: {
-      subscriptions: { include: { plan: true }, orderBy: { startDate: "desc" }, take: 1 },
+      subscriptions: { include: { plan: true }, orderBy: { startDate: "desc" } },
     },
     orderBy: { createdAt: "desc" },
   });
@@ -84,48 +85,7 @@ export default async function AdminDashboard() {
           ))}
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 20 }}>
-
-          {/* Users */}
-          <div style={s.card}>
-            <div style={s.sectionTitle}><Users size={14} color="var(--blue)" />Users ({users.length})</div>
-            {users.length === 0 && <div style={{ color: "var(--text-d)", fontSize: 12 }}>No users yet.</div>}
-            {users.map(user => {
-              const sub = user.subscriptions[0];
-              const isActive = sub?.status === "ACTIVE" && new Date(sub.endDate) > new Date();
-              return (
-                <div key={user.id} style={s.row}>
-                  <div>
-                    <div style={{ fontWeight: 600, fontSize: 13 }}>{user.email}</div>
-                    <div style={{ fontSize: 11, color: "var(--text-d)", marginTop: 3 }}>
-                      {user.role} · Joined {new Date(user.createdAt).toLocaleDateString()}
-                    </div>
-                    {sub && <div style={{ fontSize: 11, color: "var(--text-m)", marginTop: 2 }}>{sub.plan?.name} · expires {new Date(sub.endDate).toLocaleDateString()}</div>}
-                  </div>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: "flex-end" }}>
-                    <span style={s.tag(user.role === "ADMIN" ? "var(--amber)" : "var(--blue)", user.role === "ADMIN" ? "var(--amber-bg)" : "var(--blue-bg)")}>{user.role}</span>
-                    <span style={s.tag(isActive ? "var(--green)" : "var(--text-d)", isActive ? "var(--green-bg)" : "var(--bg3)")}>{isActive ? "Active Sub" : "Free"}</span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          {/* Plans */}
-          <div style={s.card}>
-            <div style={s.sectionTitle}><Package size={14} color="var(--amber)" />Subscription Plans</div>
-            {plans.length === 0 && <div style={{ color: "var(--text-d)", fontSize: 12 }}>No plans defined.</div>}
-            {plans.map(plan => (
-              <div key={plan.id} style={s.row}>
-                <div>
-                  <div style={{ fontWeight: 600, fontSize: 13 }}>{plan.name}</div>
-                  <div style={{ fontSize: 11, color: "var(--text-d)", marginTop: 3 }}>{plan.durationDiv} · {plan.description || "No description"}</div>
-                </div>
-                <div style={{ fontWeight: 700, fontSize: 15, color: "var(--green)" }}>KES {plan.price.toLocaleString()}</div>
-              </div>
-            ))}
-          </div>
-        </div>
+        <AdminManager users={JSON.parse(JSON.stringify(users))} plans={JSON.parse(JSON.stringify(plans))} />
 
         {/* Payments */}
         <div style={{ ...s.card, marginBottom: 20 }}>

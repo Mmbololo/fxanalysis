@@ -2,17 +2,20 @@
 
 import { useState, useEffect } from "react";
 import TradingDashboard from "@/components/dashboard";
-import { Lock, CreditCard, ChevronRight } from "lucide-react";
+import { Lock, CreditCard, ChevronRight, Shield } from "lucide-react";
+import Link from "next/link";
 
 export default function DashboardPage() {
   const [hasSubscription, setHasSubscription] = useState(false);
   const [showModal, setShowModal] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
 
   useEffect(() => {
     fetch("/api/subscription/status")
       .then((r) => r.json())
       .then((data) => {
         if (data.active) setHasSubscription(true);
+        if (data.role === "ADMIN") setIsAdmin(true);
       })
       .catch(() => {});
   }, []);
@@ -34,6 +37,13 @@ export default function DashboardPage() {
 
   return (
     <div style={{ position: "relative" }}>
+      {isAdmin && (
+        <div style={{ position: "fixed", bottom: 24, right: 24, zIndex: 999 }}>
+          <Link href="/admin" style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 18px", borderRadius: 10, background: "var(--amber)", color: "#000", fontWeight: 700, fontSize: 13, boxShadow: "0 4px 20px rgba(245,158,11,0.4)" }}>
+            <Shield size={15} /> Admin Panel
+          </Link>
+        </div>
+      )}
       {/* 
         We use onClickCapture to intercept event bubbling before inner elements
         can process it, allowing us to effectively 'paywall' interactions.

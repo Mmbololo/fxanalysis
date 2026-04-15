@@ -51,6 +51,11 @@ export default async function ProfilePage() {
         <Link href="/dashboard" style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-m)", padding: "5px 10px", borderRadius: 7, border: "1px solid var(--border)" }}>
           <ArrowLeft size={13} /> Dashboard
         </Link>
+        {user.role === "ADMIN" && (
+          <Link href="/admin" style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--amber)", padding: "5px 10px", borderRadius: 7, border: "1px solid var(--amber-bd)" }}>
+            <Shield size={13} /> Admin Panel
+          </Link>
+        )}
         <span style={{ fontSize: 16, fontWeight: 700 }}>My Profile</span>
         <div style={{ marginLeft: "auto" }}>
           <LogoutButton />
