@@ -1,7 +1,9 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
+import { signOut, useSession } from "next-auth/react";
+import Link from "next/link";
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Area, AreaChart, ComposedChart, Cell } from "recharts";
-import { TrendingUp, TrendingDown, Activity, BarChart3, Brain, BookOpen, RefreshCw, AlertTriangle, Target, Shield, Zap, Plus, Trash2, ArrowUpRight, ArrowDownRight, Clock, Database, Crosshair, Layers, Radio, ExternalLink } from "lucide-react";
+import { TrendingUp, TrendingDown, Activity, BarChart3, Brain, BookOpen, RefreshCw, AlertTriangle, Target, Shield, Zap, Plus, Trash2, ArrowUpRight, ArrowDownRight, Clock, Database, Crosshair, Layers, Radio, ExternalLink, LogOut, User } from "lucide-react";
 
 const T = {
   bg: "#0a0e17", bg2: "#111827", bg3: "#1a2235", bg4: "#243049",
@@ -1082,12 +1084,14 @@ Return ONLY valid JSON (no markdown):
           <div style={{width:34,height:34,borderRadius:9,background:`linear-gradient(135deg,${T.accent},${T.cyan})`,display:"flex",alignItems:"center",justifyContent:"center"}}><Activity size={18} color="#fff"/></div>
           <div><div style={{fontSize:17,fontWeight:700,letterSpacing:-0.5}}>Digipedia Trading Intel</div><div style={{fontSize:10,color:T.textD}}>COT · Sentiment · Order flow · Strategy</div></div>
         </div>
-        <div style={{display:"flex",alignItems:"center",gap:12}}>
+        <div style={{display:"flex",alignItems:"center",gap:10}}>
           {isLive && <div style={{display:"flex",alignItems:"center",gap:5,padding:"3px 8px",borderRadius:6,background:T.greenBg,border:`1px solid ${T.greenBd}`}}>
             <div style={{width:6,height:6,borderRadius:3,background:T.green,animation:"pulse 1.5s infinite"}}/>
             <span style={{fontSize:10,fontWeight:700,color:T.green,letterSpacing:0.8}}>LIVE</span>
           </div>}
           <div style={{fontSize:10,color:T.textD}}>CFTC: Apr 7{lastRef&&` · AI: ${new Date(lastRef).toLocaleDateString()}`}</div>
+          <Link href="/profile" style={{display:"flex",alignItems:"center",gap:5,padding:"5px 10px",borderRadius:7,fontSize:12,fontWeight:600,border:`1px solid ${T.border}`,color:T.textM,textDecoration:"none"}}><User size={13}/>Profile</Link>
+          <button onClick={()=>signOut({callbackUrl:"/login"})} style={{display:"flex",alignItems:"center",gap:5,padding:"5px 10px",borderRadius:7,fontSize:12,fontWeight:600,border:`1px solid ${T.border}`,color:T.textM,background:"transparent",cursor:"pointer"}}><LogOut size={13}/>Logout</button>
           <style>{`@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}`}</style>
         </div>
       </header>
