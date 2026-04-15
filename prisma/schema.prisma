@@ -1,0 +1,82 @@
+generator client {
+  provider   = "prisma-client-js"
+  engineType = "library"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  passwordHash  String
+  role          String    @default("USER") // USER or ADMIN
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  subscriptions Subscription[]
+  payments      Payment[]
+  signals       Signal[]
+}
+
+model Plan {
+  id          String   @id @default(cuid())
+  name        String   // Daily, Weekly, Monthly
+  durationDiv String   // DAY, WEEK, MONTH
+  price       Float
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  subscriptions Subscription[]
+}
+
+model Subscription {
+  id        String   @id @default(cuid())
+  userId    String
+  planId    String
+  status    String   @default("ACTIVE") // ACTIVE, EXPIRED, CANCELLED
+  startDate DateTime @default(now())
+  endDate   DateTime
+  
+  user User @relation(fields: [userId], references: [id])
+  plan Plan @relation(fields: [planId], references: [id])
+}
+
+model Payment {
+  id            String   @id @default(cuid())
+  userId        String
+  amount        Float
+  pesapalTxId   String?  @unique
+  status        String   @default("PENDING") // PENDING, COMPLETED, FAILED
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id])
+}
+
+model Signal {
+  id          String    @id @default(cuid())
+  userId      String
+  instrument  String    // XAUUSD, GBPUSD, GBPJPY, BTCUSD
+  direction   String    // Long, Short
+  entryPrice  Float
+  targetPrice Float?
+  stopLoss    Float?
+  exitPrice   Float?
+  status      String    @default("OPEN") // OPEN, CLOSED, CANCELLED
+  confidence  Int       // 1-10
+  bias        String?   // Bullish, Bearish, Neutral
+  notes       String?
+  aiSummary   String?
+  riskReward  String?
+  validFor    String?
+  keySupport  Float?
+  keyResist   Float?
+  closedAt    DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id])
+}
