@@ -27,11 +27,11 @@ export default function LoginPage() {
     <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 20 }}>
       <div style={{ marginBottom: 30, display: "flex", gap: 8, alignItems: "center", fontWeight: 700, fontSize: 20 }}>
         <TrendingUp color="var(--accent)" />
-        <span>Trading Intel</span>
+        <span>TradingIntel</span>
       </div>
       <div className="modal-content" style={{ width: "100%", maxWidth: 400 }}>
         <h2 style={{ marginBottom: 20, textAlign: "center" }}>Login to your account</h2>
-        {error && <div style={{ color: "var(--red)", background: "var(--redBg)", padding: 10, borderRadius: 8, marginBottom: 16 }}>{error}</div>}
+        {error && <div style={{ color: "var(--red)", background: "var(--red-bg)", border: "1px solid var(--red-bd)", padding: 10, borderRadius: 8, marginBottom: 16, fontSize: 13 }}>{error === "CredentialsSignin" ? "Invalid email or password." : error}</div>}
         <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           <div>
             <label style={{ display: "block", fontSize: 12, color: "var(--text-m)", marginBottom: 4 }}>Email</label>

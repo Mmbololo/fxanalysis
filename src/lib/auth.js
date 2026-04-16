@@ -20,9 +20,7 @@ export const authOptions = {
           user = await prisma.user.findUnique({
             where: { email: credentials.email }
           });
-          console.log("[AUTH] user lookup:", user ? { id: user.id, email: user.email, role: user.role, hasHash: !!user.passwordHash } : "NOT FOUND");
         } catch (err) {
-          console.error("[AUTH] DB error:", err.message);
           throw new Error("Database error: " + err.message);
         }
 
@@ -31,7 +29,6 @@ export const authOptions = {
         }
 
         const passwordOk = await bcrypt.compare(credentials.password, user.passwordHash);
-        console.log("[AUTH] password match:", passwordOk);
         if (!passwordOk) {
           throw new Error("Invalid email or password");
         }

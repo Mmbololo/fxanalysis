@@ -7,8 +7,8 @@ const mavenPro = Maven_Pro({
 });
 
 export const metadata = {
-  title: "Digipedia Trading Intel",
-  description: "Advanced Forex Analysis SaaS",
+  title: "TradingIntel",
+  description: "Advanced Forex Analysis",
 };
 
 export default function RootLayout({ children }) {

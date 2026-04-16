@@ -7,6 +7,7 @@ import { TrendingUp, TrendingDown, Activity, BarChart3, Brain, BookOpen, Refresh
 import ChatAssistant from "./chat-assistant";
 import AdvancedChart from "./AdvancedChart";
 import TradePanel from "./TradePanel";
+import TradingIntelligence from "./TradingIntelligence";
 
 
 const T = {
@@ -383,14 +384,14 @@ const MetricCard = ({ label, value, sub, subColor, icon: Icon }) => (
   </div>
 );
 
-const VIEWS = ["overview", "charts", "cot", "sentiment", "orderflow", "strategy", "signals", "journal"];
-const VIEW_LABELS = { 
-  overview: "Overview", charts: "Intelligent Chart", cot: "COT Data", sentiment: "Sentiment", orderflow: "Order Flow", 
-  strategy: "Master Strategy", signals: "Signals", journal: "Trade Journal" 
+const VIEWS = ["overview", "intelligence", "charts", "cot", "sentiment", "orderflow", "strategy", "signals", "journal"];
+const VIEW_LABELS = {
+  overview: "Overview", intelligence: "Trade Intel", charts: "Intelligent Chart", cot: "COT Data", sentiment: "Sentiment", orderflow: "Order Flow",
+  strategy: "Master Strategy", signals: "Signals", journal: "Trade Journal"
 };
-const VIEW_ICONS = { 
-  overview: Activity, charts: Crosshair, cot: BarChart3, sentiment: Brain, orderflow: Radio, 
-  strategy: Target, signals: Zap, journal: BookOpen 
+const VIEW_ICONS = {
+  overview: Activity, intelligence: Layers, charts: Crosshair, cot: BarChart3, sentiment: Brain, orderflow: Radio,
+  strategy: Target, signals: Zap, journal: BookOpen
 };
 
 export default function TradingDashboard() {
@@ -400,19 +401,32 @@ export default function TradingDashboard() {
       set: async (k, v) => localStorage.setItem(k, v)
     };
   }
-  const [view, setView] = useState("overview");
+  const [view, setView] = useState("charts");
   const [sel, setSel] = useState("XAUUSD");
+  const [intelData, setIntelData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [lastRef, setLastRef] = useState(null);
+  const [userTrades, setUserTrades] = useState([]);
+
+  const handleExecuteTrade = (tradeData) => {
+    const newTrade = {
+      ...tradeData,
+      id: Date.now(),
+      timestamp: new Date().toISOString(),
+      status: "OPEN"
+    };
+    setUserTrades([newTrade, ...userTrades]);
+    alert(`Trade Executed: ${tradeData.dir} ${tradeData.instr} @ ${tradeData.entry}`);
+  };
+
   const [journal, setJournal] = useState([]);
   const [newE, setNewE] = useState({ instrument: "XAUUSD", direction: "Long", notes: "", confidence: 3 });
-  const [loading, setLoading] = useState(true);
   const [aiData, setAiData] = useState(null);
   const [aiLoading, setAiLoading] = useState(false);
   const [optData, setOptData] = useState(null);
   const [optLoading, setOptLoading] = useState(false);
-  const [lastRef, setLastRef] = useState(null);
   const [liveData, setLiveData] = useState({});
   const [livePulse, setLivePulse] = useState(false);
-  const [intelData, setIntelData] = useState(null);
 
 
   const fetchPrices = useCallback(async () => {
@@ -428,16 +442,19 @@ export default function TradingDashboard() {
 
   useEffect(() => {
     fetchPrices();
-    const id = setInterval(fetchPrices, 10000);
-    
-    // Fetch intelligence data for AI context
-    fetch("/api/intelligence")
-      .then(res => res.json())
-      .then(data => setIntelData(data))
-      .catch(err => console.error("Intel fetch error:", err));
-
+    const id = setInterval(fetchPrices, 15000);
     return () => clearInterval(id);
   }, [fetchPrices]);
+
+  // Fetch intelligence data lazily when charts view is active
+  useEffect(() => {
+    if (view === "charts" && !intelData) {
+      fetch("/api/intelligence")
+        .then(r => r.json())
+        .then(data => setIntelData(data))
+        .catch(() => {});
+    }
+  }, [view, intelData]);
 
 
   useEffect(() => {
@@ -453,21 +470,31 @@ export default function TradingDashboard() {
   const saveJ = async j => { setJournal(j); try { await window.storage.set("tj-v4", JSON.stringify(j)); } catch {} };
   const addE = async () => { if (!newE.notes.trim()) return; await saveJ([{ ...newE, id: Date.now(), timestamp: new Date().toISOString(), status: "Open" }, ...journal]); setNewE({ instrument: "XAUUSD", direction: "Long", notes: "", confidence: 3 }); };
 
-  const apiCall = async (prompt) => {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
+  const geminiCall = async (prompt) => {
+    const res = await fetch("/api/ai/analyze", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 1000, tools: [{ type: "web_search_20250305", name: "web_search" }], messages: [{ role: "user", content: prompt }] })
+      body: JSON.stringify({ prompt }),
     });
     const data = await res.json();
-    const text = data.content?.filter(c => c.type === "text").map(c => c.text).join(" ") || "";
-    return text.replace(/```json|```/g, "").trim();
+    return (data.text || "").replace(/```json|```/g, "").trim();
   };
 
   const fetchOpt = async () => {
     setOptLoading(true);
     try {
-      const raw = await apiCall(`Search investinglive.com/Orders for today's FX option expiries for the New York 10AM cut. Return ONLY valid JSON: {"date":"date","entries":[{"pair":"EURUSD","strike":"1.1234","notional":"amount","significance":"high/medium/low","notes":"context and nearby tech levels"}],"marketContext":"1-2 sentence market summary"}`);
-      let p; try { p = JSON.parse(raw); } catch { p = { date: new Date().toLocaleDateString(), entries: [], marketContext: raw.slice(0, 250) }; }
+      const i = liveInstruments[sel];
+      const oi = OPTIONS_OI.instruments[sel];
+      const raw = await geminiCall(`You are an FX options analyst. Using only the data below, summarize today's key option expiry levels and their significance.
+
+Instrument: ${i.name}
+Put/Call Ratio: ${oi.putCallRatio || "N/A"}
+Max Pain Strike: ${oi.maxPainStrike || "N/A"}
+Top Strikes: ${JSON.stringify(oi.topStrikes || [])}
+Options Signal: ${oi.signal || "N/A"}
+
+Return ONLY valid JSON (no markdown):
+{"date":"${new Date().toLocaleDateString()}","entries":[{"pair":"${i.name}","strike":"level","notional":"significance level","significance":"high/medium/low","notes":"why this level matters"}],"marketContext":"2 sentence summary"}`);
+      let p; try { p = JSON.parse(raw); } catch { p = { date: new Date().toLocaleDateString(), entries: [], marketContext: raw.slice(0, 300) }; }
       setOptData(p); const now = new Date().toISOString(); setLastRef(now);
       try { await window.storage.set("opt-v4", JSON.stringify(p)); await window.storage.set("lr-v4", now); } catch {}
     } catch (e) { setOptData({ date: "Error", entries: [], marketContext: e.message }); }
@@ -482,10 +509,30 @@ export default function TradingDashboard() {
       const vol = VOL_DATA.instruments[sel];
       const staticSignals = INSTRUMENTS[sel].signals.map(s => `[${s.type.toUpperCase()}] ${s.text}`).join("\n");
 
-      const prompt = `You are an institutional FX/commodity trading analyst. Synthesize ALL available data sources to generate a precise, actionable trading signal for ${i.name}.
+      // Fetch live technical data from the platform's intelligence engine
+      let techData = "";
+      try {
+        const techRes = await fetch("/api/intelligence");
+        const techJson = await techRes.json();
+        const d = techJson?.instruments?.[sel];
+        if (d && !d.error) {
+          const sig = d.signal;
+          techData = `
+LIVE TECHNICAL ANALYSIS (platform-generated):
+- Trend: ${d.trend} | Structure: ${d.structure}
+- RSI(14): ${d.rsi} | MACD: ${d.macd?.cross || "none"}, Histogram: ${d.macd?.histogram?.toFixed(4)}
+- SMA20: ${d.sma?.sma20} | SMA50: ${d.sma?.sma50}
+- Support: ${d.support?.join(", ")} | Resistance: ${d.resistance?.join(", ")}
+- ATR: ${d.atr}
+${sig ? `- Signal: ${sig.direction} @ ${sig.entry} | SL: ${sig.sl} | TP1: ${sig.tp1} | Confidence: ${sig.confidence}%` : "- No active signal"}`;
+        }
+      } catch {}
 
-LIVE MARKET DATA (as of now):
-- Current price: ${priceStr(i)} (${i.change > 0 ? "+" : ""}${i.change}% daily change)
+      const prompt = `You are an institutional FX/commodity trading analyst. Synthesize the platform data below to generate a precise, actionable trading signal for ${i.name}. Use ONLY the data provided — do not reference external sources.
+
+LIVE MARKET DATA:
+- Price: ${priceStr(i)} (${i.change > 0 ? "+" : ""}${i.change}% daily change)
+${techData}
 
 COT POSITIONING (${i.cot.date}):
 - Net speculator position: ${i.cot.netSpec ? fmt(i.cot.netSpec) + " contracts" : i.cot.crossBias || "N/A"}
@@ -496,47 +543,23 @@ RETAIL SENTIMENT:
 - ${i.sentiment.retailLong}% retail long / ${i.sentiment.retailShort}% retail short
 
 OPTIONS DATA:
-- Put/call ratio: ${oi.putCallRatio || "N/A"} (${(oi.putCallRatio || 1) < 0.7 ? "bullish skew" : (oi.putCallRatio || 1) > 1.2 ? "bearish skew" : "neutral"})
-- Max pain strike: ${oi.maxPainStrike || "N/A"}
-- IV 30d: ${vol.cvol || "N/A"}%  |  IV rank: ${vol.ivRank || "N/A"}/100
-- IV premium over realized: ${vol.ivPremium || "N/A"}%
-- Risk reversal 25d: ${vol.riskReversal25d || "N/A"}
-- Term structure: ${vol.termStructure || "N/A"}
+- Put/call ratio: ${oi.putCallRatio || "N/A"} | Max pain: ${oi.maxPainStrike || "N/A"}
+- IV 30d: ${vol.cvol || "N/A"}% | Risk reversal: ${vol.riskReversal25d || "N/A"}
+- Options signal: ${oi.signal || "N/A"}
 
 VIX: ${VOL_DATA.vix.current} (${VOL_DATA.vix.regime} regime)
 
-PRE-CALCULATED SIGNALS FROM INTERNAL MODELS:
+PLATFORM INTERNAL SIGNALS:
 ${staticSignals}
 
-Now search the web for the LATEST (today):
-1. CFTC COT report update for ${i.name}
-2. Current retail sentiment data (Myfxbook, DailyFX, IG Client Sentiment)
-3. FX option expiries from investinglive.com/Orders (today's NY 10AM cut)
-4. Options OI and put/call ratios from investing.com/currencies/forex-options
-
 Return ONLY valid JSON (no markdown):
-{
-  "summary": "3-4 sentence synthesis of ALL sources",
-  "bias": "Bullish|Bearish|Neutral",
-  "confidence": 1-10,
-  "cotUpdate": "latest CFTC note with numbers",
-  "sentimentUpdate": "latest retail % with source",
-  "optionFlowUpdate": "specific expiry strikes and notionals from today",
-  "optionsOIUpdate": "current PCR, max pain, key OI cluster strikes",
-  "entryZone": "specific price or range e.g. 4700-4720",
-  "target": "price target with reasoning",
-  "stopLoss": "stop loss price with reasoning",
-  "riskReward": "e.g. 1:2.4",
-  "validFor": "e.g. 24-48 hours",
-  "keyLevels": {"support": "price", "resistance": "price"},
-  "catalysts": ["list of upcoming events that could accelerate the move"]
-}`;
+{"summary":"3-4 sentence synthesis","bias":"Bullish|Bearish|Neutral","confidence":1-10,"cotUpdate":"COT summary","sentimentUpdate":"retail sentiment note","optionFlowUpdate":"options note","optionsOIUpdate":"PCR and max pain note","entryZone":"price range","target":"price target","stopLoss":"stop loss price","riskReward":"e.g. 1:2.4","validFor":"timeframe","keyLevels":{"support":"price","resistance":"price"},"catalysts":["key risk events"]}`;
 
-      const raw = await apiCall(prompt);
+      const raw = await geminiCall(prompt);
       let p; try { p = JSON.parse(raw); } catch { p = { summary: raw.slice(0, 400), bias: "Neutral", confidence: 3 }; }
       p.instrument = sel; setAiData(p); const now = new Date().toISOString(); setLastRef(now);
       try { await window.storage.set("ai-v4", JSON.stringify(p)); await window.storage.set("lr-v4", now); } catch {}
-    } catch (e) { setAiData({ summary: "Failed: " + e.message, bias: "Neutral", confidence: 0 }); }
+    } catch (e) { setAiData({ summary: "Analysis failed: " + e.message, bias: "Neutral", confidence: 0 }); }
     setAiLoading(false);
   };
 
@@ -598,9 +621,9 @@ Return ONLY valid JSON (no markdown):
   const inst = liveInstruments[sel];
   const isLive = Object.keys(liveData).length > 0;
   const s = {
-    root: { minHeight: "100vh", background: T.bg, color: T.text, fontFamily: "var(--font-maven-pro), sans-serif" },
-    hdr: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px clamp(16px, 4vw, 24px)", borderBottom: `1px solid ${T.border}`, background: T.bg2, flexWrap: "wrap", gap: 10 },
-    nav: { display: "flex", gap: 2, padding: "0 clamp(16px, 4vw, 24px)", background: T.bg2, borderBottom: `1px solid ${T.border}`, overflowX: "auto", scrollbarWidth: "none" },
+    root: { height: "100vh", display: "flex", flexDirection: "column", background: T.bg, color: T.text, fontFamily: "var(--font-maven-pro), sans-serif", overflow: "hidden" },
+    hdr: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px clamp(16px, 4vw, 24px)", borderBottom: `1px solid ${T.border}`, background: T.bg2, flexWrap: "wrap", gap: 10, flexShrink: 0 },
+    nav: { display: "flex", gap: 2, padding: "0 clamp(16px, 4vw, 24px)", background: T.bg2, borderBottom: `1px solid ${T.border}`, overflowX: "auto", scrollbarWidth: "none", flexShrink: 0 },
     ni: a => ({ padding: "11px 14px", fontSize: 12, fontWeight: a ? 600 : 400, color: a ? T.accent : T.textM, cursor: "pointer", border: "none", background: "none", borderBottom: a ? `2px solid ${T.accent}` : "2px solid transparent", display: "flex", alignItems: "center", gap: 5, whiteSpace: "nowrap" }),
     ib: { display: "flex", gap: 6, padding: "12px 24px", flexWrap: "wrap" },
     ic: a => ({ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: 500, cursor: "pointer", border: `1px solid ${a ? T.accent : T.border}`, background: a ? T.purpleBg : T.bg2, color: a ? T.accent : T.textM }),
@@ -629,7 +652,7 @@ Return ONLY valid JSON (no markdown):
     );
 
     return (
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 340px), 1fr))", gap: 20 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 340px", gap: 24, width: "100%" }}>
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           <AdvancedChart 
             instrumentKey={sel} 
@@ -655,7 +678,11 @@ Return ONLY valid JSON (no markdown):
           </div>
         </div>
         <div>
-          <TradePanel selectedInstrument={sel} instrumentData={intelData.instruments[sel]} />
+          <TradePanel 
+            selectedInstrument={sel} 
+            instrumentData={intelData.instruments[sel]} 
+            onExecute={(data) => handleExecuteTrade({ ...data, instr: sel })}
+          />
         </div>
       </div>
     );
@@ -785,16 +812,198 @@ Return ONLY valid JSON (no markdown):
     </>); })()}
   </>);
 
-  const renderSentiment = () => (<><Tip text="Retail sentiment shows how everyday traders are positioned. Since studies show most retail traders lose money, extreme readings often work as contrarian signals. When 70%+ are long, consider selling. When 70%+ are short, consider buying. Near 50/50 means no actionable signal from sentiment alone." /><div style={s.g2}>{Object.values(INSTRUMENTS).map(i=>(
-    <div key={i.name} style={s.cd}>
-      <div style={{display:"flex",justifyContent:"space-between",marginBottom:10}}><span style={{fontSize:14,fontWeight:700}}>{i.name}</span><span style={{fontSize:11,color:i.compositeColor,fontWeight:600,padding:"2px 8px",background:i.compositeColor===T.green?T.greenBg:i.compositeColor===T.red?T.redBg:T.amberBg,borderRadius:5}}>{i.composite}</span></div>
-      <GaugeBar longPct={i.sentiment.retailLong} shortPct={i.sentiment.retailShort} label="Retail positioning"/>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginTop:10}}>
-        <div style={{background:T.bg,borderRadius:8,padding:8,textAlign:"center"}}><div style={{fontSize:10,color:T.textD,textTransform:"uppercase"}}>Contrarian</div><div style={{fontSize:13,fontWeight:600,marginTop:3,color:i.sentiment.retailLong>65?T.red:i.sentiment.retailLong<35?T.green:T.amber}}>{i.sentiment.retailLong>65?"Bearish":i.sentiment.retailLong<35?"Bullish":"Neutral"}</div></div>
-        <div style={{background:T.bg,borderRadius:8,padding:8,textAlign:"center"}}><div style={{fontSize:10,color:T.textD,textTransform:"uppercase"}}>Strength</div><div style={{fontSize:13,fontWeight:600,marginTop:3,color:Math.abs(i.sentiment.retailLong-50)>20?T.red:T.amber}}>{Math.abs(i.sentiment.retailLong-50)>20?"Extreme":Math.abs(i.sentiment.retailLong-50)>10?"Moderate":"Weak"}</div></div>
-      </div>
-    </div>
-  ))}</div></>);
+  const renderSentiment = () => {
+    const getSentimentMeta = (longPct) => {
+      const dev = longPct - 50;
+      const absDev = Math.abs(dev);
+      if (longPct >= 75) return { signal: "STRONG SELL", color: T.red, bg: T.redBg, bd: T.redBd, strength: "Extreme", tag: "Crowd extremely long — prime fade zone", action: "Look to sell rallies. Institutions typically hunt stops below retail longs at this level.", risk: "HIGH — reversal imminent or already underway" };
+      if (longPct >= 65) return { signal: "SELL BIAS", color: T.red, bg: T.redBg, bd: T.redBd, strength: "Strong", tag: "Crowded long — contrarian bearish signal", action: "Bias shorts on pullbacks. Wait for price confirmation before entering.", risk: "MODERATE-HIGH" };
+      if (longPct >= 55) return { signal: "MILD SELL", color: T.amber, bg: T.amberBg, bd: T.amberBd, strength: "Moderate", tag: "Retail leaning long — weak contrarian edge", action: "No strong signal. Combine with COT and technicals before acting.", risk: "LOW-MODERATE" };
+      if (longPct >= 45) return { signal: "NEUTRAL", color: T.textM, bg: T.bg3, bd: T.border, strength: "None", tag: "50/50 split — no contrarian edge", action: "Sentiment is not actionable here. Rely on COT and technicals instead.", risk: "LOW" };
+      if (longPct >= 35) return { signal: "MILD BUY", color: T.amber, bg: T.amberBg, bd: T.amberBd, strength: "Moderate", tag: "Retail leaning short — weak contrarian edge", action: "Slight buy bias, but not extreme enough to act alone. Confirm with structure.", risk: "LOW-MODERATE" };
+      if (longPct >= 25) return { signal: "BUY BIAS", color: T.green, bg: T.greenBg, bd: T.greenBd, strength: "Strong", tag: "Crowded short — contrarian bullish signal", action: "Bias longs on dips. Retail stops above current price are fuel for a squeeze.", risk: "MODERATE-HIGH" };
+      return { signal: "STRONG BUY", color: T.green, bg: T.greenBg, bd: T.greenBd, strength: "Extreme", tag: "Crowd extremely short — prime squeeze zone", action: "High probability long setup. Institutions will squeeze retail shorts upward.", risk: "HIGH — squeeze likely in motion" };
+    };
+
+    const allInstruments = Object.values(INSTRUMENTS);
+    const extremes = allInstruments.filter(i => Math.abs(i.sentiment.retailLong - 50) > 20);
+
+    return (
+      <>
+        {/* ── How it works banner ── */}
+        <div style={{ background: T.bg2, borderRadius: 12, padding: "16px 20px", border: `1px solid ${T.border}`, marginBottom: 20, display: "flex", gap: 20, flexWrap: "wrap" }}>
+          <div style={{ flex: 1, minWidth: 260 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6, color: T.text }}>How to read retail sentiment</div>
+            <div style={{ fontSize: 12, color: T.textM, lineHeight: 1.7 }}>
+              Retail traders as a group are statistically net losers. When the crowd is heavily positioned in one direction, institutions and smart money often push the other way to collect their stops. <strong style={{ color: T.text }}>Extreme readings (&gt;70% or &lt;30%) are the most actionable signals.</strong>
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+            {[
+              { range: "> 70% Long", signal: "Strong Sell", color: T.red },
+              { range: "60–70% Long", signal: "Sell Bias", color: T.red },
+              { range: "45–55% Long", signal: "Neutral", color: T.textM },
+              { range: "30–40% Long", signal: "Buy Bias", color: T.green },
+              { range: "< 30% Long", signal: "Strong Buy", color: T.green },
+            ].map(r => (
+              <div key={r.range} style={{ textAlign: "center", padding: "8px 12px", background: T.bg, borderRadius: 8, border: `1px solid ${T.border}`, minWidth: 90 }}>
+                <div style={{ fontSize: 10, color: T.textD, marginBottom: 3 }}>{r.range}</div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: r.color }}>{r.signal}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* ── Alert bar for extremes ── */}
+        {extremes.length > 0 && (
+          <div style={{ background: T.amberBg, border: `1px solid ${T.amberBd}`, borderRadius: 10, padding: "12px 16px", marginBottom: 16, display: "flex", alignItems: "center", gap: 10 }}>
+            <AlertTriangle size={16} color={T.amber} style={{ flexShrink: 0 }} />
+            <div style={{ fontSize: 12, color: T.textM }}>
+              <strong style={{ color: T.amber }}>Extreme sentiment detected:</strong>{" "}
+              {extremes.map(i => {
+                const m = getSentimentMeta(i.sentiment.retailLong);
+                return `${i.name} (${i.sentiment.retailLong}% long → ${m.signal})`;
+              }).join(" · ")}
+            </div>
+          </div>
+        )}
+
+        {/* ── Sentiment matrix ── */}
+        <div style={{ ...s.cd, marginBottom: 20 }}>
+          <div style={s.ct}><Activity size={14} />Sentiment matrix — all instruments</div>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+              <thead>
+                <tr style={{ borderBottom: `1px solid ${T.border}` }}>
+                  {["Instrument", "Long %", "Short %", "Positioning", "Contrarian Signal", "Signal Strength", "Tradeable?"].map(h => (
+                    <th key={h} style={{ padding: "7px 12px", textAlign: "left", fontSize: 10, fontWeight: 600, color: T.textD, textTransform: "uppercase", letterSpacing: "0.4px", whiteSpace: "nowrap" }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {allInstruments.map(i => {
+                  const m = getSentimentMeta(i.sentiment.retailLong);
+                  const tradeable = Math.abs(i.sentiment.retailLong - 50) > 15;
+                  return (
+                    <tr key={i.name} style={{ borderBottom: `1px solid ${T.border}` }} onClick={() => setSel(i.name)}>
+                      <td style={{ padding: "10px 12px", fontWeight: 700 }}>{i.name} <span style={{ fontSize: 10, color: T.textD, fontWeight: 400 }}>{i.label}</span></td>
+                      <td style={{ padding: "10px 12px", fontWeight: 700, color: T.green }}>{i.sentiment.retailLong}%</td>
+                      <td style={{ padding: "10px 12px", fontWeight: 700, color: T.red }}>{i.sentiment.retailShort}%</td>
+                      <td style={{ padding: "10px 12px" }}>
+                        <div style={{ width: 100, height: 8, borderRadius: 4, overflow: "hidden", background: T.bg3, display: "flex" }}>
+                          <div style={{ width: `${i.sentiment.retailLong}%`, background: T.green }} />
+                          <div style={{ width: `${i.sentiment.retailShort}%`, background: T.red }} />
+                        </div>
+                      </td>
+                      <td style={{ padding: "10px 12px" }}>
+                        <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 4, background: m.bg, color: m.color, border: `1px solid ${m.bd}` }}>{m.signal}</span>
+                      </td>
+                      <td style={{ padding: "10px 12px", color: m.color, fontWeight: 600 }}>{m.strength}</td>
+                      <td style={{ padding: "10px 12px" }}>
+                        <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 4, background: tradeable ? T.greenBg : T.bg3, color: tradeable ? T.green : T.textD, border: `1px solid ${tradeable ? T.greenBd : T.border}` }}>
+                          {tradeable ? "YES" : "WAIT"}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* ── Per-instrument detail cards ── */}
+        <div style={s.g2}>
+          {allInstruments.map(i => {
+            const m = getSentimentMeta(i.sentiment.retailLong);
+            const longChg = i.history.length > 1 ? i.sentiment.retailLong - (100 - (i.history[i.history.length - 2]?.net < 0 ? 60 : 40)) : 0;
+            const histPrices = i.history.map(h => h.price);
+            const priceUp = histPrices[histPrices.length - 1] > histPrices[0];
+            const diverging = (priceUp && i.sentiment.retailLong > 60) || (!priceUp && i.sentiment.retailLong < 40);
+
+            return (
+              <div key={i.name} style={{ ...s.cd, border: `1px solid ${Math.abs(i.sentiment.retailLong - 50) > 20 ? m.bd : T.border}` }}>
+                {/* Header */}
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14 }}>
+                  <div>
+                    <div style={{ fontSize: 15, fontWeight: 800 }}>{i.name}</div>
+                    <div style={{ fontSize: 11, color: T.textD, marginTop: 2 }}>{i.label}</div>
+                  </div>
+                  <span style={{ fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 5, background: m.bg, color: m.color, border: `1px solid ${m.bd}` }}>{m.signal}</span>
+                </div>
+
+                {/* Gauge */}
+                <GaugeBar longPct={i.sentiment.retailLong} shortPct={i.sentiment.retailShort} label="Retail positioning" />
+
+                {/* Stats grid */}
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 14 }}>
+                  <div style={{ background: T.bg, borderRadius: 8, padding: "8px 10px" }}>
+                    <div style={{ fontSize: 9, color: T.textD, textTransform: "uppercase", letterSpacing: "0.4px", marginBottom: 3 }}>Long %</div>
+                    <div style={{ fontSize: 18, fontWeight: 800, color: T.green }}>{i.sentiment.retailLong}%</div>
+                  </div>
+                  <div style={{ background: T.bg, borderRadius: 8, padding: "8px 10px" }}>
+                    <div style={{ fontSize: 9, color: T.textD, textTransform: "uppercase", letterSpacing: "0.4px", marginBottom: 3 }}>Short %</div>
+                    <div style={{ fontSize: 18, fontWeight: 800, color: T.red }}>{i.sentiment.retailShort}%</div>
+                  </div>
+                  <div style={{ background: T.bg, borderRadius: 8, padding: "8px 10px" }}>
+                    <div style={{ fontSize: 9, color: T.textD, textTransform: "uppercase", letterSpacing: "0.4px", marginBottom: 3 }}>Signal</div>
+                    <div style={{ fontSize: 13, fontWeight: 800, color: m.color }}>{m.strength}</div>
+                  </div>
+                </div>
+
+                {/* Divergence warning */}
+                {diverging && (
+                  <div style={{ background: T.amberBg, border: `1px solid ${T.amberBd}`, borderRadius: 7, padding: "8px 10px", marginBottom: 12, fontSize: 11, color: T.amber, display: "flex", gap: 6 }}>
+                    <AlertTriangle size={12} style={{ flexShrink: 0, marginTop: 1 }} />
+                    <span><strong>Price-sentiment divergence:</strong> Price is moving {priceUp ? "up" : "down"} but retail is {i.sentiment.retailLong > 50 ? "heavily long" : "heavily short"} — classic smart money trap setup.</span>
+                  </div>
+                )}
+
+                {/* Contrarian interpretation */}
+                <div style={{ background: m.bg, border: `1px solid ${m.bd}`, borderRadius: 8, padding: "10px 12px", marginBottom: 12 }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: m.color, textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 5 }}>Contrarian interpretation</div>
+                  <div style={{ fontSize: 12, color: T.textM, lineHeight: 1.6 }}>{m.tag}</div>
+                </div>
+
+                {/* Recommended action */}
+                <div style={{ borderRadius: 8, padding: "10px 12px", background: T.bg, border: `1px solid ${T.border}`, marginBottom: 10 }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: T.textD, textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 5 }}>Recommended action</div>
+                  <div style={{ fontSize: 12, color: T.textM, lineHeight: 1.6 }}>{m.action}</div>
+                </div>
+
+                {/* Risk level */}
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderTop: `1px solid ${T.border}` }}>
+                  <span style={{ fontSize: 10, color: T.textD, textTransform: "uppercase" }}>Signal risk level</span>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: m.color }}>{m.risk}</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* ── How professionals use sentiment ── */}
+        <div style={{ ...s.cd, marginTop: 4 }}>
+          <div style={s.ct}><Brain size={14} />How professionals use retail sentiment</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12, marginBottom: 16 }}>
+            {[
+              { title: "Fade the crowd", color: T.red, desc: "When 70%+ of retail is long, go short. Institutions know where retail stops are and deliberately push price to trigger them before the real move." },
+              { title: "Squeeze fuel", color: T.amber, desc: "Heavy short positioning (30%< long) creates upside fuel. A short squeeze happens when price rises and forces shorts to cover — accelerating the move." },
+              { title: "Confirm with COT", color: T.purple, desc: "Sentiment is most powerful when it aligns with institutional COT positioning. Retail crowded short + institutions net long = very high conviction buy." },
+              { title: "Ignore near 50/50", color: T.textM, desc: "Near-neutral sentiment gives no edge. When retail is split evenly, there's no crowd to fade. Rely entirely on price action and COT in this case." },
+            ].map((c, i) => (
+              <div key={i} style={{ background: T.bg, borderRadius: 10, padding: 14, borderLeft: `3px solid ${c.color}` }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: c.color, marginBottom: 6 }}>{c.title}</div>
+                <div style={{ fontSize: 12, color: T.textM, lineHeight: 1.6 }}>{c.desc}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{ padding: "12px 16px", background: T.bg, borderRadius: 8, border: `1px solid ${T.border}`, fontSize: 12, color: T.textM, lineHeight: 1.7 }}>
+            <strong style={{ color: T.text }}>Key rule:</strong> Never trade sentiment alone. Use it as a <em>filter</em> — when sentiment is extreme AND technicals align AND COT confirms, your probability of success is significantly higher. Sentiment alone without confirmation leads to premature entries against a trend that still has momentum.
+          </div>
+        </div>
+      </>
+    );
+  };
 
   const renderOrderFlow = () => (<>
     <div style={s.g4}>
@@ -1049,6 +1258,34 @@ Return ONLY valid JSON (no markdown):
       </div>
 
       {/* Open signals */}
+      {userTrades.length > 0 && <div style={{...s.cd,marginTop:18, border: `1px solid ${T.purple}40`, background: `linear-gradient(to bottom right, ${T.bg2}, ${T.purple}10)`}}>
+        <div style={{...s.ct, color: T.purple}}><Activity size={14}/>Live Session Trades ({userTrades.length})</div>
+        <div style={{overflowX:"auto"}}>
+          <table style={{...s.tb,minWidth:700}}><thead><tr>
+            {["Pair","Dir","Entry","Current","Lot","P&L (%)","Opened",""].map(h=><th key={h} style={s.th}>{h}</th>)}
+          </tr></thead><tbody>
+            {userTrades.map(t => {
+                const cur = liveData[t.instr]?.price;
+                const pnl = cur ? ((cur - t.entry) / t.entry) * 100 * (t.dir === "BUY" ? 1 : -1) : 0;
+                return (
+                  <tr key={t.id}>
+                    <td style={{...s.td, fontWeight: 700}}>{t.instr} <span style={{fontSize: 9, padding: "2px 4px", borderRadius: 4, background: T.purple, color: "#fff", marginLeft: 4}}>LIVE</span></td>
+                    <td style={{...s.td, color: t.dir === "BUY" ? T.green : T.red, fontWeight: 600}}>{t.dir}</td>
+                    <td style={s.td}>{t.entry}</td>
+                    <td style={{...s.td, color: T.cyan}}>{cur || "—"}</td>
+                    <td style={s.td}>{t.lot}</td>
+                    <td style={{...s.td, fontWeight: 700, color: pnlColor(pnl)}}>{pnl >= 0 ? "+" : ""}{pnl.toFixed(2)}%</td>
+                    <td style={{...s.td, color: T.textD, fontSize: 11}}>{new Date(t.timestamp).toLocaleTimeString()}</td>
+                    <td style={s.td}>
+                        <button onClick={() => setUserTrades(userTrades.filter(it => it.id !== t.id))} style={{...s.btn(T.redBg, T.red), padding: "4px 8px", border: `1px solid ${T.redBd}`}}>Close</button>
+                    </td>
+                  </tr>
+                )
+            })}
+          </tbody></table>
+        </div>
+      </div>}
+
       {openSigs.length > 0 && <div style={{...s.cd,marginTop:18}}>
         <div style={s.ct}><Radio size={14}/>Open Signals ({openSigs.length})</div>
         <div style={{overflowX:"auto"}}>
@@ -1143,7 +1380,7 @@ Return ONLY valid JSON (no markdown):
       <header style={s.hdr}>
         <div style={{display:"flex",alignItems:"center",gap:10}}>
           <div style={{width:34,height:34,borderRadius:9,background:`linear-gradient(135deg,${T.accent},${T.cyan})`,display:"flex",alignItems:"center",justifyContent:"center"}}><Activity size={18} color="#fff"/></div>
-          <div><div style={{fontSize:17,fontWeight:700,letterSpacing:-0.5}}>Digipedia Trading Intel</div><div style={{fontSize:10,color:T.textD}}>COT · Sentiment · Order flow · Strategy</div></div>
+          <div><div style={{fontSize:17,fontWeight:700,letterSpacing:-0.5}}>TradingIntel</div><div style={{fontSize:10,color:T.textD}}>COT · Sentiment · Order flow · Strategy</div></div>
         </div>
         <div style={{display:"flex",alignItems:"center",gap:10}}>
           {isLive && <div style={{display:"flex",alignItems:"center",gap:5,padding:"3px 8px",borderRadius:6,background:T.greenBg,border:`1px solid ${T.greenBd}`}}>
@@ -1157,9 +1394,10 @@ Return ONLY valid JSON (no markdown):
         </div>
       </header>
       <nav style={s.nav}>{VIEWS.map(v=>{const I=VIEW_ICONS[v];return <button key={v} style={s.ni(view===v)} onClick={()=>setView(v)}><I size={13}/>{VIEW_LABELS[v]}</button>})}</nav>
-      {view!=="overview"&&view!=="signals"&&view!=="journal"&&<div style={s.ib}>{Object.keys(INSTRUMENTS).map(k=><div key={k} style={s.ic(sel===k)} onClick={()=>setSel(k)}>{k}</div>)}</div>}
-      <main style={s.mn}>
+      {view!=="overview"&&view!=="signals"&&view!=="journal"&&view!=="intelligence"&&<div style={s.ib}>{Object.keys(INSTRUMENTS).map(k=><div key={k} style={s.ic(sel===k)} onClick={()=>setSel(k)}>{k}</div>)}</div>}
+      <main style={view==="intelligence"?{padding:0,flex:1,display:"flex",flexDirection:"column",minHeight:0,overflow:"hidden"}:{...s.mn,flex:1,overflowY:"auto"}}>
         {view==="overview"&&renderOverview()}
+        {view==="intelligence"&&<TradingIntelligence />}
         {view==="charts"&&renderCharts()}
         {view==="cot"&&renderCOT()}
         {view==="sentiment"&&renderSentiment()}
@@ -1168,7 +1406,7 @@ Return ONLY valid JSON (no markdown):
         {view==="signals"&&renderSignals()}
         {view==="journal"&&renderJournal()}
       </main>
-      <footer style={{padding:"14px 24px",borderTop:`1px solid ${T.border}`,textAlign:"center",fontSize:10,color:T.textD}}>CFTC COT · Myfxbook · DailyFX · InvestingLive (ForexLive) · Not financial advice.</footer>
+      <footer style={{padding:"14px 24px",borderTop:`1px solid ${T.border}`,textAlign:"center",fontSize:10,color:T.textD,flexShrink:0}}>CFTC COT · Myfxbook · DailyFX · InvestingLive (ForexLive) · Not financial advice.</footer>
       <ChatAssistant selectedInstrument={sel} intelligenceData={intelData} />
     </div>
 

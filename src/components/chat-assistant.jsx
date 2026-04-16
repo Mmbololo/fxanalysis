@@ -55,10 +55,7 @@ export default function ChatAssistant({ selectedInstrument, intelligenceData }) 
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           messages: newMessages,
-          context: {
-            selectedInstrument,
-            intelligenceData
-          }
+          context: { selectedInstrument },
         })
       });
 
@@ -69,7 +66,10 @@ export default function ChatAssistant({ selectedInstrument, intelligenceData }) 
         throw new Error(data.error || "Failed to get response");
       }
     } catch (err) {
-      setMessages([...newMessages, { role: "assistant", content: "⚠️ Sorry, I encountered an error: " + err.message }]);
+      // If our API returned a friendly message (like the 429 handler), use it.
+      // Otherwise, show a generic error.
+      const errorMsg = err.message || "I encountered an issue while analyzing the markets. Please try again.";
+      setMessages([...newMessages, { role: "assistant", content: errorMsg }]);
     } finally {
       setLoading(false);
     }
@@ -153,6 +153,7 @@ export default function ChatAssistant({ selectedInstrument, intelligenceData }) 
           {/* Chat Body */}
           <div 
             ref={scrollRef}
+            className="chat-scrollbar"
             style={{
               flex: 1, overflowY: "auto", padding: 16,
               display: "flex", flexDirection: "column", gap: 16
@@ -181,7 +182,9 @@ export default function ChatAssistant({ selectedInstrument, intelligenceData }) 
                   background: m.role === "user" ? T.purple : T.bg3,
                   color: T.text, fontSize: 13, lineHeight: 1.5,
                   boxShadow: m.role === "user" ? "0 4px 12px rgba(139, 92, 246, 0.2)" : "none",
-                  whiteSpace: "pre-wrap"
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                  overflowWrap: "anywhere"
                 }}>
                   {m.content}
                 </div>
@@ -264,6 +267,20 @@ export default function ChatAssistant({ selectedInstrument, intelligenceData }) 
         @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
         @keyframes spin { to { transform: rotate(360deg); } }
         @keyframes bounce { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
+        
+        .chat-scrollbar::-webkit-scrollbar {
+          width: 5px;
+        }
+        .chat-scrollbar::-webkit-scrollbar-track {
+          background: transparent;
+        }
+        .chat-scrollbar::-webkit-scrollbar-thumb {
+          background: ${T.border};
+          border-radius: 10px;
+        }
+        .chat-scrollbar::-webkit-scrollbar-thumb:hover {
+          background: ${T.textD};
+        }
       `}</style>
     </div>
   );

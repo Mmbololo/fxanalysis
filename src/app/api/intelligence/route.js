@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { sma, ema, rsi, macd, bollingerBands, atr, supportResistance, marketStructure, trendDirection, generateSignal } from "@/lib/technicals";
 
+// ── Server-side cache (5 min TTL, keyed by interval_range) ───────────
+const caches = {};
+const CACHE_TTL = 5 * 60 * 1000;
+
 const INSTRUMENTS = {
   XAUUSD: { symbol: "GC=F", label: "XAU/USD", category: "Commodities", pip: 0.01 },
   GBPUSD: { symbol: "GBPUSD=X", label: "GBP/USD", category: "Forex", pip: 0.0001 },
@@ -9,10 +13,10 @@ const INSTRUMENTS = {
   EURUSD: { symbol: "EURUSD=X", label: "EUR/USD", category: "Forex", pip: 0.0001 },
 };
 
-async function fetchOHLC(symbol, interval = "1d", range = "200d") {
+async function fetchOHLC(symbol, interval = "1d", range = "6mo") {
   try {
     const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=${range}&interval=${interval}&includePrePost=false`;
-    const res = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0" }, next: { revalidate: 300 } });
+    const res = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0" }, cache: "no-store" });
     if (!res.ok) return null;
     const json = await res.json();
     const result = json.chart?.result?.[0];
@@ -86,16 +90,19 @@ function getAffectedInstruments(title) {
   return [...new Set(affected)].slice(0, 4);
 }
 
-export async function GET(req) {
-  try {
-    const { searchParams } = new URL(req.url);
-    const interval = searchParams.get("interval") || "1d";
-    const range = searchParams.get("range") || "200d";
+export async function GET() {
+  // Return cached response if fresh
+  if (cache.data && Date.now() - cache.ts < CACHE_TTL) {
+    return NextResponse.json(cache.data, {
+      headers: { "X-Cache": "HIT", "Cache-Control": "public, max-age=300" },
+    });
+  }
 
-    // Fetch all OHLC data in parallel
+  try {
+    // Fetch all OHLC data in parallel (6 months = ~130 daily bars, enough for all indicators)
     const ohlcData = await Promise.all(
       Object.entries(INSTRUMENTS).map(async ([key, info]) => {
-        const data = await fetchOHLC(info.symbol, interval, range);
+        const data = await fetchOHLC(info.symbol);
         return [key, data];
       })
     );
@@ -197,7 +204,12 @@ export async function GET(req) {
       return (order[a.impact] - order[b.impact]) || (new Date(b.pubDate) - new Date(a.pubDate));
     });
 
-    return NextResponse.json({ instruments: results, news: allNews.slice(0, 20), ts: Date.now() });
+    const payload = { instruments: results, news: allNews.slice(0, 20), ts: Date.now() };
+    cache.data = payload;
+    cache.ts = Date.now();
+    return NextResponse.json(payload, {
+      headers: { "X-Cache": "MISS", "Cache-Control": "public, max-age=300" },
+    });
   } catch (e) {
     return NextResponse.json({ error: e.message }, { status: 500 });
   }

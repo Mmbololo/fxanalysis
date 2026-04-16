@@ -21,7 +21,7 @@ const T = {
   textD: "#64748b",
 };
 
-export default function TradePanel({ selectedInstrument, instrumentData }) {
+export default function TradePanel({ selectedInstrument, instrumentData, onExecute }) {
   const [balance, setBalance] = useState(10000);
   const [riskPct, setRiskPct] = useState(1);
   const [levels, setLevels] = useState({ entry: 0, sl: 0, tp: 0 });
@@ -51,24 +51,41 @@ export default function TradePanel({ selectedInstrument, instrumentData }) {
     if (!levels.entry || !levels.sl || !levels.tp) return;
 
     // Lot Size calculation logic
-    // Lot = (Balance * Risk%) / (SL Pips * Pip Value)
+    // Lot = (Balance * Risk%) / (SL Points * Point Value per Lot)
     const riskVal = balance * (riskPct / 100);
-    const slPips = Math.abs(levels.entry - levels.sl);
+    const slDistance = Math.abs(levels.entry - levels.sl);
     
-    // Simple pip value approximation for major pairs
-    let pipValue = 0.0001;
-    if (selectedInstrument.includes("JPY")) pipValue = 0.01;
-    if (selectedInstrument.includes("XAU")) pipValue = 0.01;
-    if (selectedInstrument.includes("BTC")) pipValue = 1;
+    // Asset-specific point values for 1 Standard Lot
+    // Gold (XAUUSD): 1 point = $100 per lot
+    // BTCUSD: 1 point = $1 per lot (if 1 lot = 1 BTC)
+    // Forex: 0.0001 (1 pip) = $10 per lot
+    let pointValuePerLot = 10; // Default Forex pip value ($10)
+    let pointSize = 0.0001;
 
-    const pips = slPips / pipValue;
-    const calculatedLotSize = pips > 0 ? (riskVal / (pips * 10)) : 0; // Standard lot assumes $10/pip for 1 lot on most majors
+    if (selectedInstrument.includes("XAU")) {
+      pointValuePerLot = 100; // $100 per full point
+      pointSize = 1; 
+    } else if (selectedInstrument.includes("BTC")) {
+      pointValuePerLot = 1; // $1 per full dollar
+      pointSize = 1;
+    } else if (selectedInstrument.includes("JPY")) {
+      pointSize = 0.01;
+      pointValuePerLot = 10; // Roughly $7-10 depending on base, use 10 for simplicity
+    }
 
-    setLotSize(parseFloat(calculatedLotSize.toFixed(2)));
+    const points = slDistance / pointSize;
+    const calculatedLotSize = slDistance > 0 ? (riskVal / (slDistance * pointValuePerLot / pointSize)) : 0;
+    
+    // Refined Formula: Lot = Risk / (SL_Distance * Multiplier)
+    // For Gold: Lot = 100 / (10 * 100) = 0.1
+    const goldMultiplier = selectedInstrument.includes("XAU") ? 100 : selectedInstrument.includes("BTC") ? 1 : 100000;
+    const finalLotSize = slDistance > 0 ? (riskVal / (slDistance * goldMultiplier)) : 0;
+
+    setLotSize(parseFloat(finalLotSize.toFixed(3)));
     setRiskAmount(riskVal);
     
     const tpDistance = Math.abs(levels.tp - levels.entry);
-    setRrRatio(slPips > 0 ? (tpDistance / slPips).toFixed(2) : 0);
+    setRrRatio(slDistance > 0 ? (tpDistance / slDistance).toFixed(2) : 0);
   }, [balance, riskPct, levels, selectedInstrument]);
 
   return (
@@ -160,7 +177,7 @@ export default function TradePanel({ selectedInstrument, instrumentData }) {
         <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
           <div>
             <div style={{ fontSize: 10, color: T.textM, marginBottom: 2 }}>Recommended Lot Size</div>
-            <div style={{ fontSize: 24, fontWeight: 900, color: T.purple }}>{lotSize} <span style={{ fontSize: 14 }}>Standard</span></div>
+            <div style={{ fontSize: 24, fontWeight: 900, color: T.purple }}>{lotSize} <span style={{ fontSize: 14 }}>Lots</span></div>
           </div>
           <div style={{ textAlign: "right" }}>
             <div style={{ fontSize: 10, color: T.textM, marginBottom: 2 }}>Risk/Reward</div>
@@ -175,12 +192,21 @@ export default function TradePanel({ selectedInstrument, instrumentData }) {
 
       {/* Actions */}
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        <button style={{ 
-          background: T.purple, color: "#fff", border: "none", 
-          padding: "12px", borderRadius: 10, fontWeight: 800, fontSize: 14,
-          cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
-          boxShadow: `0 4px 15px ${T.purple}40`
-        }}>
+        <button 
+          onClick={() => onExecute && onExecute({ 
+            dir: levels.tp > levels.entry ? "BUY" : "SELL", 
+            entry: levels.entry, 
+            sl: levels.sl, 
+            tp: levels.tp, 
+            lot: lotSize 
+          })}
+          style={{ 
+            background: T.purple, color: "#fff", border: "none", 
+            padding: "12px", borderRadius: 10, fontWeight: 800, fontSize: 14,
+            cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+            boxShadow: `0 4px 15px ${T.purple}40`
+          }}
+        >
           Execute Trade <ArrowRight size={16} />
         </button>
         <div style={{ display: "flex", gap: 8 }}>

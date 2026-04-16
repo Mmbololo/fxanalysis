@@ -57,7 +57,7 @@ export default async function AdminDashboard() {
         </div>
         <div>
           <div style={{ fontSize: 17, fontWeight: 700, letterSpacing: -0.5 }}>Admin Dashboard</div>
-          <div style={{ fontSize: 11, color: "var(--text-d)" }}>Digipedia Trading Intel</div>
+          <div style={{ fontSize: 11, color: "var(--text-d)" }}>TradingIntel</div>
         </div>
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12 }}>
           <span style={{ fontSize: 12, color: "var(--text-d)" }}>{session.user.email}</span>

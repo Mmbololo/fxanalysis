@@ -7,7 +7,7 @@ export default function LandingPage() {
       <nav className="navbar">
         <div className="brand">
           <TrendingUp className="icon-accent" size={24} />
-          <span>Digipedia Trading Intel</span>
+          <span>TradingIntel</span>
         </div>
         <div className="nav-links">
           <Link href="/login" className="btn-secondary">Login</Link>
