@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { sma, ema, rsi, macd, bollingerBands, atr, supportResistance, marketStructure, trendDirection, generateSignal } from "@/lib/technicals";
+import { sma, ema, rsi, macd, bollingerBands, atr, supportResistance, marketStructure, trendDirection, generateSignal, detectOrderBlocks, detectFVG, detectStructure, detectLiquiditySweeps, smcSetupScore } from "@/lib/technicals";
 
 // ── Server-side cache (5 min TTL, keyed by interval_range) ───────────
 const caches = {};
@@ -138,7 +138,40 @@ export async function GET(req) {
       const srLevels = supportResistance(highs, lows, closes);
       const structure = marketStructure(closes, highs, lows);
       const trend = trendDirection(closes, sma20, sma50, sma200);
-      const signal = generateSignal(key, current, trend, rsiVal, macdData, srLevels, atrVal);
+      const signal = generateSignal(key, current, trend, rsiVal, macdData, srLevels, atrVal, structure);
+
+      // ── SMC analysis ──────────────────────────────────────────────────
+      const smcOB = detectOrderBlocks(opens, highs, lows, closes, atrVal);
+      const smcFVG = detectFVG(highs, lows, closes);
+      const smcStruct = detectStructure(highs, lows, closes);
+      const smcSweeps = detectLiquiditySweeps(highs, lows, closes);
+      const smcScore = smcSetupScore(trend, smcStruct, smcOB, smcFVG, smcSweeps, rsiVal);
+
+      // Round price levels to appropriate precision
+      const dp = key.includes("JPY") ? 3 : key.includes("BTC") ? 0 : 4;
+      const rp = v => parseFloat(v.toFixed(dp));
+      const roundOB = ob => ({ ...ob, high: rp(ob.high), low: rp(ob.low), mid: rp(ob.mid) });
+      const roundFVG = f => ({ ...f, high: rp(f.high), low: rp(f.low), mid: rp(f.mid) });
+
+      const smc = {
+        score: smcScore,
+        structureTrend: smcStruct.structureTrend,
+        bos: smcStruct.bos ? { ...smcStruct.bos, level: rp(smcStruct.bos.level) } : null,
+        choch: smcStruct.choch ? { ...smcStruct.choch, level: rp(smcStruct.choch.level) } : null,
+        lastSwingHigh: smcStruct.lastSwingHigh ? rp(smcStruct.lastSwingHigh.price) : null,
+        lastSwingLow: smcStruct.lastSwingLow ? rp(smcStruct.lastSwingLow.price) : null,
+        bullishOBs: smcOB.bullishOBs.map(roundOB),
+        bearishOBs: smcOB.bearishOBs.map(roundOB),
+        breakerBlocks: smcOB.breakerBlocks.map(roundOB),
+        bullishFVGs: smcFVG.bullishFVGs.map(roundFVG),
+        bearishFVGs: smcFVG.bearishFVGs.map(roundFVG),
+        liquiditySweeps: smcSweeps.map(s => ({
+          ...s,
+          level: rp(s.level),
+          wickLow: s.wickLow != null ? rp(s.wickLow) : undefined,
+          wickHigh: s.wickHigh != null ? rp(s.wickHigh) : undefined,
+        })),
+      };
 
       // Full chart data for AdvancedChart (lightweight-charts format)
       const fullSeries = dates.map((time, i) => ({
@@ -177,8 +210,9 @@ export async function GET(req) {
         support: srLevels.supports.map(v => parseFloat(v.toFixed(4))),
         resistance: srLevels.resistances.map(v => parseFloat(v.toFixed(4))),
         signal,
+        smc,
         fullSeries,
-        chartData: fullSeries.slice(-30), // backward compatibility for mini charts
+        chartData: fullSeries.slice(-30),
       };
     }
 

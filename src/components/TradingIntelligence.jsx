@@ -3,7 +3,8 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { createChart, ColorType, CandlestickSeries, HistogramSeries, LineSeries, createSeriesMarkers } from "lightweight-charts";
 import {
   RefreshCw, TrendingUp, TrendingDown, Minus, Zap, AlertTriangle,
-  Target, BarChart2, Newspaper, Activity, ArrowUpRight, ArrowDownRight, Clock
+  Target, BarChart2, Newspaper, Activity, ArrowUpRight, ArrowDownRight, Clock,
+  Layers, Shield, TrendingUp as TrendUp
 } from "lucide-react";
 
 // ── Palette ──────────────────────────────────────────────────────────
@@ -343,6 +344,75 @@ function UnifiedChart({ instrumentKey, data, news, chartType, onChartTypeChange 
       if (lvl) mainSeries.createPriceLine({ price: lvl, color: "rgba(239,68,68,0.6)", lineWidth: 1, lineStyle: 3, axisLabelVisible: true, title: `R${i + 1}` });
     });
 
+    // ── SMC Overlays ──────────────────────────────────────────────────────
+    if (data?.smc) {
+      const smc = data.smc;
+
+      // BOS level
+      if (smc.bos?.level) {
+        mainSeries.createPriceLine({
+          price: smc.bos.level,
+          color: smc.bos.type === "bullish" ? "rgba(16,185,129,0.85)" : "rgba(239,68,68,0.85)",
+          lineWidth: 2, lineStyle: 0, axisLabelVisible: true,
+          title: smc.bos.label,
+        });
+      }
+
+      // CHoCH level
+      if (smc.choch?.level) {
+        mainSeries.createPriceLine({
+          price: smc.choch.level,
+          color: smc.choch.type === "bullish" ? "rgba(6,182,212,0.85)" : "rgba(245,158,11,0.85)",
+          lineWidth: 1, lineStyle: 2, axisLabelVisible: true,
+          title: smc.choch.label,
+        });
+      }
+
+      // Swing high / swing low reference
+      if (smc.lastSwingHigh) {
+        mainSeries.createPriceLine({ price: smc.lastSwingHigh, color: "rgba(239,68,68,0.35)", lineWidth: 1, lineStyle: 3, axisLabelVisible: true, title: "SH" });
+      }
+      if (smc.lastSwingLow) {
+        mainSeries.createPriceLine({ price: smc.lastSwingLow, color: "rgba(16,185,129,0.35)", lineWidth: 1, lineStyle: 3, axisLabelVisible: true, title: "SL·" });
+      }
+
+      // Bullish Order Blocks — high + low boundary pair
+      (smc.bullishOBs || []).forEach((ob, i) => {
+        const alpha = ob.inZone ? 0.9 : 0.45;
+        const color = `rgba(16,185,129,${alpha})`;
+        mainSeries.createPriceLine({ price: ob.high, color, lineWidth: ob.inZone ? 2 : 1, lineStyle: 0, axisLabelVisible: true, title: ob.inZone ? `Bull OB ▲` : `OB${i + 1}↑` });
+        mainSeries.createPriceLine({ price: ob.low,  color, lineWidth: ob.inZone ? 2 : 1, lineStyle: 0, axisLabelVisible: false });
+      });
+
+      // Bearish Order Blocks
+      (smc.bearishOBs || []).forEach((ob, i) => {
+        const alpha = ob.inZone ? 0.9 : 0.45;
+        const color = `rgba(239,68,68,${alpha})`;
+        mainSeries.createPriceLine({ price: ob.high, color, lineWidth: ob.inZone ? 2 : 1, lineStyle: 0, axisLabelVisible: true, title: ob.inZone ? `Bear OB ▼` : `OB${i + 1}↓` });
+        mainSeries.createPriceLine({ price: ob.low,  color, lineWidth: ob.inZone ? 2 : 1, lineStyle: 0, axisLabelVisible: false });
+      });
+
+      // Breaker Blocks
+      (smc.breakerBlocks || []).forEach((b, i) => {
+        const color = b.flipType === "bullish_breaker" ? "rgba(6,182,212,0.75)" : "rgba(139,92,246,0.75)";
+        const label = b.flipType === "bullish_breaker" ? `BB↑${i + 1}` : `BB↓${i + 1}`;
+        mainSeries.createPriceLine({ price: b.high, color, lineWidth: 1, lineStyle: 1, axisLabelVisible: true, title: label });
+        mainSeries.createPriceLine({ price: b.low,  color, lineWidth: 1, lineStyle: 1, axisLabelVisible: false });
+      });
+
+      // Bullish FVGs
+      (smc.bullishFVGs || []).forEach((f, i) => {
+        mainSeries.createPriceLine({ price: f.high, color: "rgba(16,185,129,0.38)", lineWidth: 1, lineStyle: 3, axisLabelVisible: i === 0, title: i === 0 ? "FVG↑" : "" });
+        mainSeries.createPriceLine({ price: f.low,  color: "rgba(16,185,129,0.38)", lineWidth: 1, lineStyle: 3, axisLabelVisible: false });
+      });
+
+      // Bearish FVGs
+      (smc.bearishFVGs || []).forEach((f, i) => {
+        mainSeries.createPriceLine({ price: f.high, color: "rgba(239,68,68,0.38)", lineWidth: 1, lineStyle: 3, axisLabelVisible: i === 0, title: i === 0 ? "FVG↓" : "" });
+        mainSeries.createPriceLine({ price: f.low,  color: "rgba(239,68,68,0.38)", lineWidth: 1, lineStyle: 3, axisLabelVisible: false });
+      });
+    }
+
     // ── WVPPP ──
     const wvppp = calcWVPPP(series);
     if (wvppp) {
@@ -377,8 +447,33 @@ function UnifiedChart({ instrumentKey, data, news, chartType, onChartTypeChange 
         }));
     }
 
+    // ── Liquidity sweep markers ──
+    const sweepMarkers = (data?.smc?.liquiditySweeps || []).map(sw => {
+      const bar = series[sw.index];
+      if (!bar) return null;
+      return {
+        time: bar.time,
+        position: sw.type === "bullish" ? "belowBar" : "aboveBar",
+        color: sw.type === "bullish" ? "rgba(6,182,212,0.9)" : "rgba(245,158,11,0.9)",
+        shape: sw.type === "bullish" ? "arrowUp" : "arrowDown",
+        text: sw.type === "bullish" ? "Sweep↑" : "Sweep↓",
+        size: 1,
+      };
+    }).filter(Boolean);
+
+    // ── BOS / CHoCH markers ──
+    const smcStructMarkers = [];
+    if (data?.smc?.bos) {
+      const lastBar = series[series.length - 1];
+      if (lastBar) smcStructMarkers.push({ time: lastBar.time, position: data.smc.bos.type === "bullish" ? "belowBar" : "aboveBar", color: data.smc.bos.type === "bullish" ? C.green : C.red, shape: data.smc.bos.type === "bullish" ? "arrowUp" : "arrowDown", text: data.smc.bos.label, size: 2 });
+    }
+    if (data?.smc?.choch) {
+      const prevBar = series[series.length - 2];
+      if (prevBar) smcStructMarkers.push({ time: prevBar.time, position: data.smc.choch.type === "bullish" ? "belowBar" : "aboveBar", color: data.smc.choch.type === "bullish" ? C.cyan : C.amber, shape: "circle", text: data.smc.choch.label, size: 1 });
+    }
+
     // Merge + deduplicate by time, then set once
-    const allMarkers = [...divMarkers, ...newsMarkers]
+    const allMarkers = [...divMarkers, ...newsMarkers, ...sweepMarkers, ...smcStructMarkers]
       .sort((a, b) => (typeof a.time === "number" ? a.time : 0) - (typeof b.time === "number" ? b.time : 0));
     if (allMarkers.length) {
       try {
@@ -659,6 +754,199 @@ function NewsPanel({ news, instrumentKey }) {
           <div style={{ fontSize: 11, color: C.text, lineHeight: 1.5 }}>{n.title}</div>
         </a>
       ))}
+    </div>
+  );
+}
+
+// ── SMC Panel ─────────────────────────────────────────────────────────
+function SMCPanel({ data, instrumentKey }) {
+  const smc = data?.smc;
+  if (!smc) return (
+    <div style={{ padding: 20, textAlign: "center", color: C.textD, fontSize: 12 }}>
+      No SMC data available
+    </div>
+  );
+
+  const score = smc.score ?? 0;
+  const scoreColor = score >= 65 ? C.green : score >= 45 ? C.amber : C.red;
+  const scoreLabel = score >= 72 ? "Strong Setup" : score >= 58 ? "Good Setup" : score >= 42 ? "Weak Setup" : "No Setup";
+
+  const structColor = smc.structureTrend === "BULLISH" ? C.green : smc.structureTrend === "BEARISH" ? C.red : C.amber;
+
+  const inZoneOBs = [
+    ...(smc.bullishOBs || []).filter(ob => ob.inZone),
+    ...(smc.bearishOBs || []).filter(ob => ob.inZone),
+    ...(smc.breakerBlocks || []).filter(ob => ob.inZone),
+  ];
+
+  const allOBs = [
+    ...(smc.bullishOBs || []).map(ob => ({ ...ob, type: "Bullish OB" })),
+    ...(smc.bearishOBs || []).map(ob => ({ ...ob, type: "Bearish OB" })),
+    ...(smc.breakerBlocks || []).map(ob => ({ ...ob, type: "Breaker" })),
+  ];
+
+  const allFVGs = [
+    ...(smc.bullishFVGs || []).map(f => ({ ...f, type: "Bull FVG" })),
+    ...(smc.bearishFVGs || []).map(f => ({ ...f, type: "Bear FVG" })),
+  ];
+
+  const lastSweep = smc.liquiditySweeps?.slice(-1)[0];
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+
+      {/* Score Header */}
+      <div style={{ background: C.bg3, borderRadius: 10, padding: 12, border: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 12 }}>
+        <div style={{ width: 52, height: 52, borderRadius: "50%", border: `3px solid ${scoreColor}`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+          <span style={{ fontSize: 16, fontWeight: 800, color: scoreColor }}>{score}</span>
+        </div>
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{scoreLabel}</div>
+          <div style={{ fontSize: 10, color: C.textM, marginTop: 2 }}>
+            Structure: <span style={{ color: structColor, fontWeight: 600 }}>{smc.structureTrend || "—"}</span>
+          </div>
+          <div style={{ fontSize: 10, color: C.textD, marginTop: 1 }}>
+            {inZoneOBs.length > 0 && `${inZoneOBs.length} OB in zone · `}
+            {allFVGs.length > 0 && `${allFVGs.length} FVG open · `}
+            {(smc.liquiditySweeps?.length || 0) > 0 && `${smc.liquiditySweeps.length} sweep`}
+          </div>
+        </div>
+      </div>
+
+      {/* BOS / CHoCH */}
+      {(smc.bos || smc.choch) && (
+        <div style={{ background: C.bg3, borderRadius: 8, padding: 10, border: `1px solid ${C.border}` }}>
+          <div style={{ fontSize: 9, color: C.textD, textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 7, fontWeight: 600 }}>Structure Breaks</div>
+          {smc.bos && (
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "5px 0", borderBottom: smc.choch ? `1px solid ${C.border}` : "none" }}>
+              <div>
+                <span style={{ fontSize: 10, fontWeight: 700, color: smc.bos.type === "bullish" ? C.green : C.red }}>BOS</span>
+                <span style={{ fontSize: 9, color: C.textM, marginLeft: 5 }}>{smc.bos.type?.toUpperCase()}</span>
+              </div>
+              <span style={{ fontSize: 11, fontWeight: 600, fontFamily: "monospace", color: C.text }}>{fmtPrice(instrumentKey, smc.bos.level)}</span>
+            </div>
+          )}
+          {smc.choch && (
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "5px 0" }}>
+              <div>
+                <span style={{ fontSize: 10, fontWeight: 700, color: C.purple }}>CHoCH</span>
+                <span style={{ fontSize: 9, color: C.textM, marginLeft: 5 }}>{smc.choch.type?.toUpperCase()}</span>
+              </div>
+              <span style={{ fontSize: 11, fontWeight: 600, fontFamily: "monospace", color: C.text }}>{fmtPrice(instrumentKey, smc.choch.level)}</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Swing Levels */}
+      {(smc.lastSwingHigh || smc.lastSwingLow) && (
+        <div style={{ background: C.bg3, borderRadius: 8, padding: 10, border: `1px solid ${C.border}` }}>
+          <div style={{ fontSize: 9, color: C.textD, textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 7, fontWeight: 600 }}>Swing Levels</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+            {smc.lastSwingHigh && (
+              <div style={{ background: C.bg2, borderRadius: 5, padding: "6px 8px" }}>
+                <div style={{ fontSize: 9, color: C.textD }}>Last Swing High</div>
+                <div style={{ fontSize: 11, fontWeight: 600, color: C.red, fontFamily: "monospace" }}>{fmtPrice(instrumentKey, smc.lastSwingHigh)}</div>
+              </div>
+            )}
+            {smc.lastSwingLow && (
+              <div style={{ background: C.bg2, borderRadius: 5, padding: "6px 8px" }}>
+                <div style={{ fontSize: 9, color: C.textD }}>Last Swing Low</div>
+                <div style={{ fontSize: 11, fontWeight: 600, color: C.green, fontFamily: "monospace" }}>{fmtPrice(instrumentKey, smc.lastSwingLow)}</div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Order Blocks */}
+      {allOBs.length > 0 && (
+        <div style={{ background: C.bg3, borderRadius: 8, padding: 10, border: `1px solid ${C.border}` }}>
+          <div style={{ fontSize: 9, color: C.textD, textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 7, fontWeight: 600, display: "flex", justifyContent: "space-between" }}>
+            <span>Order Blocks</span>
+            <span style={{ color: inZoneOBs.length > 0 ? C.amber : C.textD }}>{inZoneOBs.length} active</span>
+          </div>
+          {allOBs.map((ob, i) => {
+            const isBull = ob.type === "Bullish OB";
+            const isBreaker = ob.type === "Breaker";
+            const col = isBreaker ? C.purple : isBull ? C.green : C.red;
+            return (
+              <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "5px 0", borderBottom: i < allOBs.length - 1 ? `1px solid ${C.border}` : "none" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                  <div style={{ width: 6, height: 6, borderRadius: 1, background: col }} />
+                  <div>
+                    <span style={{ fontSize: 9, fontWeight: 700, color: col }}>{ob.type}</span>
+                    {ob.inZone && <span style={{ fontSize: 8, marginLeft: 4, padding: "1px 4px", borderRadius: 2, background: C.amberBg, color: C.amber }}>IN ZONE</span>}
+                  </div>
+                </div>
+                <div style={{ textAlign: "right", fontSize: 10, fontFamily: "monospace" }}>
+                  <div style={{ color: C.red, fontSize: 9 }}>{fmtPrice(instrumentKey, ob.high)}</div>
+                  <div style={{ color: C.green, fontSize: 9 }}>{fmtPrice(instrumentKey, ob.low)}</div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Fair Value Gaps */}
+      {allFVGs.length > 0 && (
+        <div style={{ background: C.bg3, borderRadius: 8, padding: 10, border: `1px solid ${C.border}` }}>
+          <div style={{ fontSize: 9, color: C.textD, textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 7, fontWeight: 600 }}>Fair Value Gaps</div>
+          {allFVGs.map((f, i) => {
+            const isBull = f.type === "Bull FVG";
+            const col = isBull ? C.green : C.red;
+            const size = f.high - f.low;
+            return (
+              <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "5px 0", borderBottom: i < allFVGs.length - 1 ? `1px solid ${C.border}` : "none" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                  <div style={{ width: 6, height: 6, borderRadius: 1, background: col, opacity: 0.7 }} />
+                  <span style={{ fontSize: 9, fontWeight: 700, color: col }}>{f.type}</span>
+                </div>
+                <div style={{ textAlign: "right" }}>
+                  <div style={{ fontSize: 10, fontFamily: "monospace", color: C.textM }}>
+                    {fmtPrice(instrumentKey, f.low)} – {fmtPrice(instrumentKey, f.high)}
+                  </div>
+                  <div style={{ fontSize: 9, color: C.textD }}>Gap: {fmtPrice(instrumentKey, size)}</div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Liquidity Sweeps */}
+      {(smc.liquiditySweeps?.length || 0) > 0 && (
+        <div style={{ background: C.bg3, borderRadius: 8, padding: 10, border: `1px solid ${C.border}` }}>
+          <div style={{ fontSize: 9, color: C.textD, textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 7, fontWeight: 600 }}>Liquidity Sweeps</div>
+          {smc.liquiditySweeps.slice(-4).reverse().map((s, i) => {
+            const isBull = s.type === "bullish";
+            const col = isBull ? C.green : C.red;
+            return (
+              <div key={i} style={{ padding: "6px 0", borderBottom: i < Math.min(smc.liquiditySweeps.length, 4) - 1 ? `1px solid ${C.border}` : "none" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                    <span style={{ fontSize: 10 }}>{isBull ? "↑" : "↓"}</span>
+                    <div>
+                      <span style={{ fontSize: 9, fontWeight: 700, color: col }}>{isBull ? "Bullish" : "Bearish"} Sweep</span>
+                      {s.magnitude && <span style={{ fontSize: 8, color: C.textD, marginLeft: 4 }}>×{s.magnitude.toFixed(1)} ATR</span>}
+                    </div>
+                  </div>
+                  <span style={{ fontSize: 10, fontFamily: "monospace", color: C.textM }}>{fmtPrice(instrumentKey, s.level)}</span>
+                </div>
+                {s.note && <div style={{ fontSize: 9, color: C.textD, marginTop: 2, marginLeft: 17 }}>{s.note}</div>}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Empty state */}
+      {!smc.bos && !smc.choch && allOBs.length === 0 && allFVGs.length === 0 && !(smc.liquiditySweeps?.length) && (
+        <div style={{ padding: "20px 0", textAlign: "center", color: C.textD, fontSize: 12 }}>
+          No active SMC patterns detected
+        </div>
+      )}
     </div>
   );
 }

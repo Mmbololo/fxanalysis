@@ -384,14 +384,14 @@ const MetricCard = ({ label, value, sub, subColor, icon: Icon }) => (
   </div>
 );
 
-const VIEWS = ["overview", "intelligence", "cot", "sentiment", "orderflow", "strategy", "signals", "journal"];
+const VIEWS = ["overview", "intelligence", "marketintel", "tradelab"];
 const VIEW_LABELS = {
-  overview: "Overview", intelligence: "Chart Terminal", cot: "COT Data", sentiment: "Sentiment", orderflow: "Order Flow",
-  strategy: "Master Strategy", signals: "Signals", journal: "Trade Journal"
+  overview: "Overview", intelligence: "Chart Terminal", marketintel: "Market Intel",
+  tradelab: "Trade Lab",
 };
 const VIEW_ICONS = {
-  overview: Activity, intelligence: Crosshair, cot: BarChart3, sentiment: Brain, orderflow: Radio,
-  strategy: Target, signals: Zap, journal: BookOpen
+  overview: Activity, intelligence: Crosshair, marketintel: Brain,
+  tradelab: Zap,
 };
 
 export default function TradingDashboard() {
@@ -427,6 +427,10 @@ export default function TradingDashboard() {
   const [optLoading, setOptLoading] = useState(false);
   const [liveData, setLiveData] = useState({});
   const [livePulse, setLivePulse] = useState(false);
+  const [cotLive, setCotLive] = useState(null);
+  const [cotLoading, setCotLoading] = useState(false);
+  const [posTab, setPosTab] = useState("overview");
+  const [labTab, setLabTab] = useState("scanner");
 
 
   const fetchPrices = useCallback(async () => {
@@ -455,6 +459,17 @@ export default function TradingDashboard() {
         .catch(() => {});
     }
   }, [intelData]);
+
+  // Fetch live COT data when Market Intel view is opened
+  useEffect(() => {
+    if (view === "marketintel" && !cotLive && !cotLoading) {
+      setCotLoading(true);
+      fetch("/api/cot")
+        .then(r => r.json())
+        .then(data => { setCotLive(data); setCotLoading(false); })
+        .catch(() => setCotLoading(false));
+    }
+  }, [view, cotLive, cotLoading]);
 
 
   useEffect(() => {
@@ -732,6 +747,442 @@ Return ONLY valid JSON (no markdown):
       </div>
     </div>
   </>);
+
+  const renderPositioning = () => {
+    const inst = liveInstruments[sel];
+    const oo = OPTIONS_OI.instruments[sel];
+    const vd = VOL_DATA.instruments[sel];
+    const analysis = ANALYSIS[sel];
+    const liveC = cotLive?.instruments?.[sel];
+
+    // ── Scoring ──────────────────────────────────────────────────────────
+    const cotScore = liveC?.score ?? (() => {
+      const net = inst.cot.netSpec;
+      if (!net) return 50;
+      if (net > 100000) return 74; if (net > 50000) return 62; if (net > 0) return 55;
+      if (net > -50000) return 44; if (net > -100000) return 36; return 25;
+    })();
+
+    const retailLong = inst.sentiment.retailLong;
+    const sentScore = 100 - retailLong; // contrarian inversion
+
+    const pcrScore = oo?.putCallRatio != null
+      ? Math.round(Math.max(10, Math.min(90, 50 + (1.0 - oo.putCallRatio) * 38)))
+      : 50;
+
+    const combined = Math.round(cotScore * 0.35 + sentScore * 0.30 + pcrScore * 0.35);
+
+    const getDecision = s => {
+      if (s >= 68) return { label: "Strong Buy", color: T.green, bg: T.greenBg, bd: T.greenBd, dir: "BUY" };
+      if (s >= 57) return { label: "Buy Bias",   color: T.green, bg: T.greenBg, bd: T.greenBd, dir: "BUY" };
+      if (s >= 45) return { label: "Neutral / Wait", color: T.amber, bg: T.amberBg, bd: T.amberBd, dir: "WAIT" };
+      if (s >= 34) return { label: "Sell Bias",  color: T.red,   bg: T.redBg,   bd: T.redBd,   dir: "SELL" };
+      return             { label: "Strong Sell", color: T.red,   bg: T.redBg,   bd: T.redBd,   dir: "SELL" };
+    };
+    const decision = getDecision(combined);
+
+    const getSentMeta = lp => {
+      if (lp >= 75) return { signal:"STRONG SELL", color:T.red,   bg:T.redBg,   bd:T.redBd,   action:"Fade the crowd. Institutions are hunting stops below retail longs. Sell rallies." };
+      if (lp >= 65) return { signal:"SELL BIAS",   color:T.red,   bg:T.redBg,   bd:T.redBd,   action:"Bias shorts on pullbacks. Wait for price confirmation before entering." };
+      if (lp >= 55) return { signal:"MILD SELL",   color:T.amber, bg:T.amberBg, bd:T.amberBd, action:"Weak contrarian edge. Combine with COT and technicals before acting." };
+      if (lp >= 45) return { signal:"NEUTRAL",     color:T.textM, bg:T.bg3,     bd:T.border,  action:"No sentiment edge. Rely on COT and price action." };
+      if (lp >= 35) return { signal:"MILD BUY",    color:T.amber, bg:T.amberBg, bd:T.amberBd, action:"Slight buy bias. Confirm with structure and COT." };
+      if (lp >= 25) return { signal:"BUY BIAS",    color:T.green, bg:T.greenBg, bd:T.greenBd, action:"Bias longs on dips. Retail short stops above current price = squeeze fuel." };
+      return               { signal:"STRONG BUY",  color:T.green, bg:T.greenBg, bd:T.greenBd, action:"High probability long. Institutions will squeeze retail shorts upward." };
+    };
+    const sentMeta = getSentMeta(retailLong);
+
+    // ── Sub-components ──────────────────────────────────────────────────
+    const ScoreBar = ({ score, label, weight, pillarColor }) => {
+      const c = score > 55 ? T.green : score < 45 ? T.red : T.amber;
+      return (
+        <div style={{ background: T.bg2, borderRadius: 12, padding: "14px 16px", border: `1px solid ${pillarColor}30` }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+            <span style={{ fontSize: 11, fontWeight: 600, color: pillarColor, textTransform: "uppercase", letterSpacing: 0.5 }}>{label}</span>
+            <span style={{ fontSize: 10, color: T.textD, background: T.bg, borderRadius: 4, padding: "2px 6px" }}>{weight}% weight</span>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 5 }}>
+            <div style={{ flex: 1, height: 8, background: T.bg, borderRadius: 4, overflow: "hidden", position: "relative" }}>
+              <div style={{ position: "absolute", left: "50%", top: 0, height: "100%", width: 1, background: T.border }} />
+              <div style={{ height: "100%", width: `${score}%`, background: `linear-gradient(90deg, ${score > 50 ? "rgba(16,185,129,0.3)" : "rgba(239,68,68,0.3)"}, ${c})`, borderRadius: 4 }} />
+            </div>
+            <span style={{ fontSize: 20, fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: c, minWidth: 40, textAlign: "right" }}>{score}</span>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, color: T.textD }}>
+            <span>BEAR (0)</span><span>NEUTRAL (50)</span><span>BULL (100)</span>
+          </div>
+        </div>
+      );
+    };
+
+    const TabBtn = ({ id, label }) => (
+      <button onClick={() => setPosTab(id)} style={{ padding: "7px 16px", borderRadius: 8, fontSize: 12, fontWeight: posTab === id ? 700 : 500, background: posTab === id ? T.bg4 : "transparent", border: `1px solid ${posTab === id ? T.borderL : T.border}`, color: posTab === id ? T.text : T.textD, cursor: "pointer" }}>{label}</button>
+    );
+
+    // COT table rows from live or static data
+    const cotGroups = (() => {
+      if (liveC?.groups) {
+        const g = liveC.groups;
+        return Object.entries(g).map(([k, v]) => ({
+          label: k === "managedMoney" ? "Managed Money" : k === "producers" ? "Producers / Merchants" : k === "swapDealers" ? "Swap Dealers" : k === "assetManagers" ? "Asset Managers" : k === "leveragedFunds" ? "Leveraged Funds" : k === "dealers" ? "Dealers / Intermediaries" : "Non-Reportable",
+          long: v.long, short: v.short, net: v.net,
+          color: v.net > 0 ? T.green : T.red,
+        }));
+      }
+      // fallback static
+      if (sel === "XAUUSD") return [
+        { label: "Non-Commercial (Specs)", long: inst.cot.nonComm.long, short: inst.cot.nonComm.short, net: inst.cot.nonComm.long - inst.cot.nonComm.short, color: T.green },
+        { label: "Commercial (Hedgers)", long: inst.cot.comm.long, short: inst.cot.comm.short, net: inst.cot.comm.long - inst.cot.comm.short, color: T.red },
+        { label: "Non-Reportable", long: inst.cot.nonRep.long, short: inst.cot.nonRep.short, net: inst.cot.nonRep.long - inst.cot.nonRep.short, color: T.green },
+      ];
+      if (sel === "GBPUSD" || sel === "EURUSD") return [
+        { label: "Asset Managers", long: inst.cot.assetMgr?.long ?? 0, short: inst.cot.assetMgr?.short ?? 0, net: (inst.cot.assetMgr?.long ?? 0) - (inst.cot.assetMgr?.short ?? 0), color: T.red },
+        { label: "Leveraged Funds", long: inst.cot.leveraged?.long ?? 0, short: inst.cot.leveraged?.short ?? 0, net: (inst.cot.leveraged?.long ?? 0) - (inst.cot.leveraged?.short ?? 0), color: T.green },
+        { label: "Dealers", long: inst.cot.dealer?.long ?? 0, short: inst.cot.dealer?.short ?? 0, net: (inst.cot.dealer?.long ?? 0) - (inst.cot.dealer?.short ?? 0), color: T.green },
+      ];
+      return [];
+    })();
+
+    const specNet = liveC?.specNet ?? inst.cot.netSpec;
+    const prevNet = liveC?.prevSpecNet ?? inst.cot.prevNet;
+    const weekChg = liveC?.weekChange ?? (specNet != null && prevNet != null ? specNet - prevNet : null);
+    const cotDate = liveC?.date ?? inst.cot.date ?? "N/A";
+
+    // ── Overview tab ─────────────────────────────────────────────────────
+    const renderOverviewTab = () => (
+      <>
+        {analysis && (
+          <div style={{ ...s.cd, borderColor: decision.color, borderWidth: 1 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+              <div style={s.ct}><Brain size={14} />Multi-pillar analysis — {sel}</div>
+              <span style={{ padding: "4px 14px", borderRadius: 7, fontSize: 13, fontWeight: 700, background: decision.bg, color: decision.color, border: `1px solid ${decision.bd}` }}>{decision.dir}: {decision.label}</span>
+            </div>
+            <div style={{ fontSize: 14, color: T.text, lineHeight: 1.7, marginBottom: 20, fontStyle: "italic", padding: "12px 16px", background: T.bg, borderRadius: 10 }}>{analysis.summary}</div>
+            {analysis.layers.map((l, i) => (
+              <div key={i} style={{ marginBottom: 20 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                  <div style={{ width: 6, height: 6, borderRadius: 3, background: l.color }} />
+                  <span style={{ fontSize: 14, fontWeight: 600, color: T.text }}>{l.title}</span>
+                </div>
+                <div style={{ fontSize: 12, color: T.purple, lineHeight: 1.6, padding: "8px 14px", background: `${T.purple}08`, borderRadius: 8, borderLeft: `3px solid ${T.purple}`, marginBottom: 8 }}>
+                  <span style={{ fontSize: 10, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6, display: "block", marginBottom: 2, color: T.purple }}>How to read this</span>
+                  {l.explain}
+                </div>
+                <div style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "10px 14px", background: SigBg(l.signal), border: `1px solid ${SigBd(l.signal)}`, borderRadius: 8 }}>
+                  <div style={{ marginTop: 2 }}><SignalIcon type={l.signal} /></div>
+                  <div style={{ fontSize: 13, color: T.text, lineHeight: 1.7 }}>{l.finding}</div>
+                </div>
+              </div>
+            ))}
+            <div style={{ borderTop: `1px solid ${T.border}`, paddingTop: 16, marginTop: 8 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                <Target size={16} style={{ color: decision.color }} />
+                <span style={{ fontSize: 15, fontWeight: 700, color: decision.color }}>Bottom line</span>
+              </div>
+              <div style={{ fontSize: 13, color: T.text, lineHeight: 1.8, padding: "14px 18px", background: T.bg, borderRadius: 10, border: `1px solid ${decision.color}30` }}>{analysis.bottomLine}</div>
+            </div>
+          </div>
+        )}
+      </>
+    );
+
+    // ── COT tab ──────────────────────────────────────────────────────────
+    const renderCOTTab = () => (
+      <>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16, padding: "10px 16px", background: cotLoading ? T.bg2 : liveC ? T.greenBg : T.amberBg, borderRadius: 10, border: `1px solid ${cotLoading ? T.border : liveC ? T.greenBd : T.amberBd}` }}>
+          {cotLoading
+            ? <><RefreshCw size={13} style={{ color: T.textD, animation: "spin 1s linear infinite" }} /><span style={{ fontSize: 12, color: T.textD }}>Fetching live CFTC data…</span></>
+            : liveC
+              ? <><div style={{ width: 8, height: 8, borderRadius: 4, background: T.green, animation: "pulse 2s infinite" }} /><span style={{ fontSize: 12, color: T.green, fontWeight: 600 }}>Live CFTC data — {cotDate}</span><span style={{ fontSize: 11, color: T.textD, marginLeft: 8 }}>Socrata API · updated weekly (Friday 3:30PM ET)</span></>
+              : <><div style={{ width: 8, height: 8, borderRadius: 4, background: T.amber }} /><span style={{ fontSize: 12, color: T.amber }}>Using static data — {cotDate}</span></>
+          }
+        </div>
+
+        <div style={s.g4}>
+          <MetricCard label="Spec net position" value={specNet != null ? fmt(specNet) : (inst.cot.crossBias || "N/A")} sub={weekChg != null ? `${weekChg > 0 ? "▲" : "▼"} ${fmt(Math.abs(weekChg))} this week` : ""} subColor={weekChg != null ? (weekChg > 0 ? T.green : T.red) : T.textM} icon={BarChart3} />
+          <MetricCard label="Open interest" value={liveC?.oi ? fmt(liveC.oi) : (inst.cot.oi ? fmt(inst.cot.oi) : "Cross")} sub="total contracts" icon={Database} />
+          <MetricCard label="COT score" value={cotScore} sub={cotScore >= 55 ? "Bullish lean" : cotScore <= 45 ? "Bearish lean" : "Neutral"} subColor={cotScore >= 55 ? T.green : cotScore <= 45 ? T.red : T.amber} icon={Target} />
+          <MetricCard label="Data date" value={cotDate} sub="CFTC Tuesday cut" icon={Clock} />
+        </div>
+
+        <div style={s.g2}>
+          <div style={s.cd}>
+            <div style={s.ct}><Database size={14} />Positioning breakdown by trader group</div>
+            <Tip text="Managed money / large specs = directional traders (hedge funds, CTAs). Commercials / producers = hedgers. Asset managers = slow institutional money. Dealers = market-making banks. When specs are extreme net-long, the trade is crowded." />
+            {cotGroups.length > 0 ? (
+              <table style={s.tb}>
+                <thead><tr>{["Trader Group", "Long", "Short", "Net Position"].map(h => <th key={h} style={s.th}>{h}</th>)}</tr></thead>
+                <tbody>
+                  {cotGroups.map((g, i) => (
+                    <tr key={i}>
+                      <td style={s.td}>{g.label}</td>
+                      <td style={{ ...s.td, color: T.green }}>{g.long.toLocaleString()}</td>
+                      <td style={{ ...s.td, color: T.red }}>{g.short.toLocaleString()}</td>
+                      <td style={{ ...s.td, fontWeight: 700, color: g.color }}>{g.net > 0 ? "+" : ""}{fmt(g.net)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+              sel === "GBPJPY" ? (
+                <table style={s.tb}>
+                  <thead><tr>{["Leg", "Spec Net", "Direction"].map(h => <th key={h} style={s.th}>{h}</th>)}</tr></thead>
+                  <tbody>
+                    <tr><td style={s.td}>GBP</td><td style={{ ...s.td, color: T.red }}>{fmt(liveC?.gbpNet ?? inst.cot.gbpNet)}</td><td style={{ ...s.td, color: T.red }}>Bearish</td></tr>
+                    <tr><td style={s.td}>JPY</td><td style={{ ...s.td, color: T.red }}>{fmt(liveC?.jpyNet ?? inst.cot.jpyNet)}</td><td style={{ ...s.td, color: T.red }}>Bearish (JPY sold)</td></tr>
+                    <tr><td style={{ ...s.td, fontWeight: 600 }}>Cross bias</td><td style={{ ...s.td, color: T.amber }} colSpan={2}>{inst.cot.crossBias}</td></tr>
+                  </tbody>
+                </table>
+              ) : null
+            )}
+          </div>
+          <div style={s.cd}>
+            <div style={s.ct}><Activity size={14} />Net spec positioning vs price</div>
+            <Tip text="When purple area (spec net) diverges from the green price line — price rising but specs trimming — it's a COT divergence warning. This often precedes a reversal." />
+            <ResponsiveContainer width="100%" height={220}>
+              <ComposedChart data={inst.history}>
+                <CartesianGrid stroke={T.border} strokeDasharray="3 3" />
+                <XAxis dataKey="w" tick={{ fill: T.textD, fontSize: 10 }} />
+                <YAxis yAxisId="l" tick={{ fill: T.textD, fontSize: 10 }} />
+                <YAxis yAxisId="r" orientation="right" tick={{ fill: T.textD, fontSize: 10 }} />
+                <Tooltip contentStyle={{ background: T.bg3, border: `1px solid ${T.border}`, borderRadius: 8, fontSize: 11 }} />
+                <Area yAxisId="l" dataKey="net" fill="rgba(139,92,246,0.12)" stroke={T.purple} strokeWidth={2} name="Net (K)" />
+                <Line yAxisId="r" dataKey="price" stroke={T.green} strokeWidth={2} dot={{ r: 3, fill: T.green }} strokeDasharray="5 3" name="Price" />
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        <div style={{ ...s.cd, marginTop: 16 }}>
+          <div style={s.ct}><Database size={14} />COT key concepts</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12, marginBottom: 14 }}>
+            {[
+              { title: "Non-Commercial (Speculators)", color: T.purple, icon: "📈", who: "Hedge funds, CTAs, prop traders", signal: "Extreme net longs = crowded. COT divergence (specs buying but price falling) = distribution warning." },
+              { title: "Commercial (Hedgers)", color: T.cyan, icon: "🏭", who: "Producers, exporters, banks with real exposure", signal: "Commercials are right long-term. Extreme commercial net-long = bullish fundamentals." },
+              { title: "Non-Reportable (Small Specs)", color: T.amber, icon: "👤", who: "Retail traders below reporting threshold", signal: "Dumb-money indicator. Extreme one-sidedness confirms crowded trade due for reversal." },
+            ].map(g => (
+              <div key={g.title} style={{ background: `${g.color}08`, borderRadius: 10, padding: "12px 14px", border: `1px solid ${g.color}25` }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: g.color, marginBottom: 5 }}>{g.icon} {g.title}</div>
+                <div style={{ fontSize: 11, color: T.textD, marginBottom: 5 }}><strong style={{ color: T.textM }}>Who: </strong>{g.who}</div>
+                <div style={{ fontSize: 11, color: T.textM, lineHeight: 1.6, borderTop: `1px solid ${g.color}20`, paddingTop: 5 }}>{g.signal}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{ fontSize: 11, color: T.textD, display: "flex", alignItems: "center", gap: 8 }}>
+            <div style={{ width: 6, height: 6, borderRadius: 3, background: T.amber }} />
+            CFTC releases COT every Friday 3:30 PM ET covering positions as of prior Tuesday (~3 day lag).
+            <span style={{ marginLeft: "auto", color: T.purple, fontWeight: 600 }}>Latest: {cotDate}</span>
+          </div>
+        </div>
+        <div style={{ ...s.cd, marginTop: 16 }}>
+          <div style={s.ct}><Zap size={14} />COT signals — {sel}</div>
+          {inst.signals.map((sig, i) => <div key={i} style={s.sr(sig.type)}><div style={{ marginTop: 2 }}><SignalIcon type={sig.type} /></div><div style={{ color: T.text }}>{sig.text}</div></div>)}
+        </div>
+      </>
+    );
+
+    // ── Sentiment tab ────────────────────────────────────────────────────
+    const renderSentimentTab = () => (
+      <>
+        <div style={{ background: T.bg2, borderRadius: 12, padding: "16px 20px", border: `1px solid ${T.border}`, marginBottom: 20 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6, color: T.text }}>How retail sentiment works as a contrarian signal</div>
+          <div style={{ fontSize: 12, color: T.textM, lineHeight: 1.7 }}>
+            Retail traders are statistically net losers. When the crowd is heavily positioned in one direction, institutions push the other way to collect their stops.{" "}
+            <strong style={{ color: T.text }}>Extremes (&gt;70% or &lt;30%) are the most actionable readings.</strong>
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
+            {[{ range: "> 70% Long", signal: "Strong Sell", color: T.red }, { range: "60–70% Long", signal: "Sell Bias", color: T.red }, { range: "45–55%", signal: "Neutral", color: T.textM }, { range: "30–40% Long", signal: "Buy Bias", color: T.green }, { range: "< 30% Long", signal: "Strong Buy", color: T.green }].map(r => (
+              <div key={r.range} style={{ textAlign: "center", padding: "8px 12px", background: T.bg, borderRadius: 8, border: `1px solid ${T.border}`, minWidth: 90 }}>
+                <div style={{ fontSize: 10, color: T.textD, marginBottom: 3 }}>{r.range}</div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: r.color }}>{r.signal}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div style={s.cd}>
+          <div style={s.ct}><Activity size={14} />Sentiment matrix — all instruments</div>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+              <thead><tr style={{ borderBottom: `1px solid ${T.border}` }}>{["Instrument", "Long %", "Short %", "Bar", "Signal", "Tradeable?"].map(h => <th key={h} style={{ padding: "7px 12px", textAlign: "left", fontSize: 10, fontWeight: 600, color: T.textD, textTransform: "uppercase", letterSpacing: "0.4px", whiteSpace: "nowrap" }}>{h}</th>)}</tr></thead>
+              <tbody>
+                {Object.values(liveInstruments).map(i => {
+                  const m = getSentMeta(i.sentiment.retailLong);
+                  const tradeable = Math.abs(i.sentiment.retailLong - 50) > 15;
+                  return (
+                    <tr key={i.name} style={{ borderBottom: `1px solid ${T.border}`, cursor: "pointer" }} onClick={() => setSel(i.name)}>
+                      <td style={{ padding: "10px 12px", fontWeight: 700 }}>{i.name} <span style={{ fontSize: 10, color: T.textD, fontWeight: 400 }}>{i.label}</span></td>
+                      <td style={{ padding: "10px 12px", fontWeight: 700, color: T.green }}>{i.sentiment.retailLong}%</td>
+                      <td style={{ padding: "10px 12px", fontWeight: 700, color: T.red }}>{i.sentiment.retailShort}%</td>
+                      <td style={{ padding: "10px 12px" }}><div style={{ width: 100, height: 8, borderRadius: 4, overflow: "hidden", background: T.bg3, display: "flex" }}><div style={{ width: `${i.sentiment.retailLong}%`, background: T.green }} /><div style={{ width: `${i.sentiment.retailShort}%`, background: T.red }} /></div></td>
+                      <td style={{ padding: "10px 12px" }}><span style={{ fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 4, background: m.bg, color: m.color, border: `1px solid ${m.bd}` }}>{m.signal}</span></td>
+                      <td style={{ padding: "10px 12px" }}><span style={{ fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 4, background: tradeable ? T.greenBg : T.bg3, color: tradeable ? T.green : T.textD, border: `1px solid ${tradeable ? T.greenBd : T.border}` }}>{tradeable ? "YES" : "WAIT"}</span></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div style={{ ...s.cd, marginTop: 16, border: `1px solid ${sentMeta.bd}` }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+            <div style={s.ct}><Activity size={14} />Sentiment detail — {sel}</div>
+            <span style={{ fontSize: 12, fontWeight: 700, padding: "3px 12px", borderRadius: 6, background: sentMeta.bg, color: sentMeta.color, border: `1px solid ${sentMeta.bd}` }}>{sentMeta.signal}</span>
+          </div>
+          <GaugeBar longPct={retailLong} shortPct={inst.sentiment.retailShort} label="Retail positioning" />
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 14 }}>
+            <div style={{ background: sentMeta.bg, border: `1px solid ${sentMeta.bd}`, borderRadius: 8, padding: "10px 14px" }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: sentMeta.color, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 5 }}>Contrarian interpretation</div>
+              <div style={{ fontSize: 12, color: T.textM, lineHeight: 1.6 }}>{retailLong >= 65 ? "Crowd is heavily long — prime fade zone. Institutions will target stops below this crowded positioning." : retailLong <= 35 ? "Crowd is heavily short — squeeze territory. Retail short stops above current price = fuel for a rally." : "No extreme reading. Use other signals as primary driver."}</div>
+            </div>
+            <div style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8, padding: "10px 14px" }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: T.textD, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 5 }}>Recommended action</div>
+              <div style={{ fontSize: 12, color: T.textM, lineHeight: 1.6 }}>{sentMeta.action}</div>
+            </div>
+          </div>
+          <div style={{ marginTop: 14, padding: "12px 16px", background: T.bg, borderRadius: 8, border: `1px solid ${T.border}`, fontSize: 12, color: T.textM, lineHeight: 1.7 }}>
+            <strong style={{ color: T.text }}>Sentiment score: </strong>{sentScore}/100 (contrarian) — {sentScore > 55 ? "Bullish contrarian lean" : sentScore < 45 ? "Bearish contrarian lean" : "No directional edge"}.
+            {" "}<strong style={{ color: T.text }}>Rule:</strong> Only act on sentiment when extreme (&gt;65% or &lt;35%) AND aligned with COT direction.
+          </div>
+        </div>
+      </>
+    );
+
+    // ── Flow / Options tab ────────────────────────────────────────────────
+    const renderFlowTab = () => (
+      <>
+        {oo?.putCallRatio != null && (
+          <>
+            <div style={s.g4}>
+              <MetricCard label="Put/call ratio" value={oo.putCallRatio.toFixed(2)} sub={oo.putCallRatio < 0.7 ? "Bullish skew" : oo.putCallRatio > 1.2 ? "Bearish skew" : "Neutral"} subColor={oo.putCallRatio < 0.7 ? T.green : oo.putCallRatio > 1.2 ? T.red : T.amber} icon={BarChart3} />
+              <MetricCard label="Max pain strike" value={oo.maxPainStrike} sub="price magnet zone" subColor={T.amber} icon={Target} />
+              <MetricCard label="30d implied vol" value={`${oo.iv30d}%`} sub={`${oo.ivChange > 0 ? "+" : ""}${oo.ivChange}% change`} subColor={oo.ivChange > 0 ? T.red : T.green} icon={Activity} />
+              <MetricCard label="Options OI" value={fmt(oo.optionsOI)} sub="total contracts" icon={Layers} />
+            </div>
+            <div style={{ ...s.cd, marginTop: 16 }}>
+              <div style={s.ct}><BarChart3 size={14} />Strike OI map — call wall / put wall</div>
+              <Tip text="Call walls = resistance (sellers have protection). Put walls = support (buyers have protection). Max pain is where option writers make most profit near expiry — price gravitates here." />
+              <div style={{ display: "grid", gap: 6 }}>
+                {oo.topStrikes.map((st, i) => {
+                  const maxOI = Math.max(...oo.topStrikes.map(x => Math.max(x.callOI, x.putOI)));
+                  return (
+                    <div key={i} style={{ display: "grid", gridTemplateColumns: "90px 1fr 50px 1fr 60px", alignItems: "center", gap: 8, padding: "6px 0" }}>
+                      <div style={{ fontSize: 12, fontWeight: 600, fontFamily: "'JetBrains Mono',monospace", color: st.type === "maxpain" ? T.amber : st.type === "target" ? T.green : st.type === "support" ? T.blue : T.text }}>{st.strike}</div>
+                      <div style={{ display: "flex", justifyContent: "flex-end" }}><div style={{ height: 16, borderRadius: "4px 0 0 4px", background: `linear-gradient(270deg,${T.green},rgba(16,185,129,0.3))`, width: `${(st.callOI / maxOI) * 100}%`, minWidth: 2 }} /></div>
+                      <div style={{ textAlign: "center", fontSize: 10, color: T.textD }}>◆</div>
+                      <div><div style={{ height: 16, borderRadius: "0 4px 4px 0", background: `linear-gradient(90deg,${T.red},rgba(239,68,68,0.3))`, width: `${(st.putOI / maxOI) * 100}%`, minWidth: 2 }} /></div>
+                      <div style={{ fontSize: 10, color: T.textD, textAlign: "right" }}><span style={{ color: T.green }}>{fmt(st.callOI)}</span>/<span style={{ color: T.red }}>{fmt(st.putOI)}</span></div>
+                    </div>
+                  );
+                })}
+                <div style={{ display: "flex", gap: 16, fontSize: 10, color: T.textD, marginTop: 4 }}><span><span style={{ color: T.green }}>■</span> Call OI</span><span><span style={{ color: T.red }}>■</span> Put OI</span><span><span style={{ color: T.amber }}>■</span> Max pain</span></div>
+              </div>
+              <div style={{ marginTop: 14, padding: "10px 14px", background: oo.putCallRatio < 0.7 ? T.greenBg : oo.putCallRatio > 1.2 ? T.redBg : T.amberBg, border: `1px solid ${oo.putCallRatio < 0.7 ? T.greenBd : oo.putCallRatio > 1.2 ? T.redBd : T.amberBd}`, borderRadius: 8, fontSize: 12, color: T.text, lineHeight: 1.6 }}>
+                <strong style={{ color: oo.putCallRatio < 0.7 ? T.green : oo.putCallRatio > 1.2 ? T.red : T.amber }}>Signal: </strong>{oo.signal}
+              </div>
+            </div>
+            <div style={{ ...s.cd, marginTop: 16 }}>
+              <div style={s.ct}><Activity size={14} />Put/call ratio trend (6 weeks)</div>
+              <ResponsiveContainer width="100%" height={170}>
+                <LineChart data={OPTIONS_OI.pcRatioHistory}><CartesianGrid stroke={T.border} strokeDasharray="3 3" /><XAxis dataKey="w" tick={{ fill: T.textD, fontSize: 10 }} /><YAxis tick={{ fill: T.textD, fontSize: 10 }} domain={[0.3, 1.5]} /><Tooltip contentStyle={{ background: T.bg3, border: `1px solid ${T.border}`, borderRadius: 8, fontSize: 11 }} />
+                  {sel === "XAUUSD" && <Line dataKey="xau" stroke={T.green} strokeWidth={2} dot={{ r: 3 }} name="XAUUSD PCR" />}
+                  {sel === "GBPUSD" && <Line dataKey="gbp" stroke={T.red} strokeWidth={2} dot={{ r: 3 }} name="GBPUSD PCR" />}
+                  {sel === "BTCUSD" && <Line dataKey="btc" stroke={T.amber} strokeWidth={2} dot={{ r: 3 }} name="BTCUSD PCR" />}
+                  <Line dataKey={() => 1.0} stroke={T.textD} strokeDasharray="5 5" strokeWidth={1} dot={false} name="Neutral (1.0)" />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </>
+        )}
+        <div style={{ ...s.cd, marginTop: 16 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+            <div style={s.ct}><Layers size={14} />NY cut option expiries — {OPTION_EXPIRIES.date}</div>
+            <button onClick={fetchOpt} disabled={optLoading} style={{ ...s.btn(T.accent, "#fff"), opacity: optLoading ? 0.6 : 1 }}><RefreshCw size={13} style={optLoading ? { animation: "spin 1s linear infinite" } : {}} />{optLoading ? "Fetching…" : "Refresh from InvestingLive"}</button>
+          </div>
+          <div style={{ fontSize: 12, color: T.textM, marginBottom: 14, padding: "10px 14px", background: T.bg, borderRadius: 8, borderLeft: `3px solid ${T.cyan}`, lineHeight: 1.6 }}><strong style={{ color: T.cyan }}>Context: </strong>{OPTION_EXPIRIES.context}</div>
+          {OPTION_EXPIRIES.entries.map((e, i) => (
+            <div key={i} style={{ display: "grid", gridTemplateColumns: "80px 1fr 1fr auto", alignItems: "center", gap: 14, padding: "14px 16px", background: T.bg, borderRadius: 10, marginBottom: 8, border: `1px solid ${e.significance === "high" ? T.cyanBd : T.border}` }}>
+              <div><div style={{ fontSize: 14, fontWeight: 700, color: T.cyan }}>{e.pair}</div><div style={{ fontSize: 10, color: T.textD, marginTop: 2 }}>{e.notional}</div></div>
+              <div><div style={{ display: "flex", alignItems: "baseline", gap: 8 }}><span style={{ fontSize: 20, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace" }}>{e.strike}</span><span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 4, fontWeight: 600, background: e.significance === "high" ? T.cyanBg : T.amberBg, color: e.significance === "high" ? T.cyan : T.amber }}>{e.significance}</span></div><div style={{ fontSize: 11, color: T.textD, marginTop: 2 }}>Tech: {e.techLevel}</div></div>
+              <div style={{ fontSize: 12, color: T.textM, lineHeight: 1.5 }}>{e.notes}</div>
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}><div style={{ width: 12, height: 12, borderRadius: 6, background: e.proximity === "close" ? T.cyan : T.amber, boxShadow: e.proximity === "close" ? `0 0 8px ${T.cyan}` : "none" }} /><span style={{ fontSize: 9, color: T.textD }}>{e.proximity}</span></div>
+            </div>
+          ))}
+          {optData?.entries?.length > 0 && <div style={{ marginTop: 12, padding: 14, background: T.purpleBg, border: `1px solid ${T.purpleBd}`, borderRadius: 10 }}><div style={{ fontSize: 12, fontWeight: 600, color: T.accent, marginBottom: 8 }}>AI-refreshed ({optData.date})</div>{optData.entries.map((e, i) => <div key={i} style={{ fontSize: 12, color: T.text, marginBottom: 4 }}><strong>{e.pair}</strong> @ {e.strike} — {e.notes || e.significance}</div>)}{optData.marketContext && <div style={{ fontSize: 11, color: T.textM, marginTop: 8 }}>{optData.marketContext}</div>}</div>}
+        </div>
+        {vd && (
+          <div style={{ ...s.cd, marginTop: 16 }}>
+            <div style={s.ct}><Activity size={14} />Volatility dashboard — {sel}</div>
+            <Tip text="IV rank tells you if vol is historically cheap or expensive. Risk reversal reveals directional skew — negative means calls are pricier (bullish), positive means puts are pricier (bearish)." />
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(4,minmax(0,1fr))", gap: 10, marginBottom: 14 }}>
+              <div style={{ background: T.bg, borderRadius: 8, padding: 12, textAlign: "center" }}><div style={{ fontSize: 10, color: T.textD, textTransform: "uppercase" }}>VIX</div><div style={{ fontSize: 22, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", marginTop: 4, color: VOL_DATA.vix.current > 25 ? T.red : VOL_DATA.vix.current > 20 ? T.amber : T.green }}>{VOL_DATA.vix.current}</div><div style={{ fontSize: 10, color: VOL_DATA.vix.change > 0 ? T.red : T.green, marginTop: 2 }}>{VOL_DATA.vix.regime}</div></div>
+              <div style={{ background: T.bg, borderRadius: 8, padding: 12, textAlign: "center" }}><div style={{ fontSize: 10, color: T.textD, textTransform: "uppercase" }}>30d IV</div><div style={{ fontSize: 22, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", marginTop: 4, color: T.text }}>{vd.cvol}%</div><div style={{ fontSize: 10, color: T.textD, marginTop: 2 }}>1w: {vd.cvol1w}% · 1m: {vd.cvol1m}%</div></div>
+              <div style={{ background: T.bg, borderRadius: 8, padding: 12, textAlign: "center" }}><div style={{ fontSize: 10, color: T.textD, textTransform: "uppercase" }}>IV Rank</div><div style={{ fontSize: 22, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", marginTop: 4, color: vd.ivRank > 70 ? T.red : vd.ivRank > 40 ? T.amber : T.green }}>{vd.ivRank}</div><div style={{ fontSize: 10, color: T.textD, marginTop: 2 }}>pctile: {vd.ivPercentile}</div></div>
+              <div style={{ background: T.bg, borderRadius: 8, padding: 12, textAlign: "center" }}><div style={{ fontSize: 10, color: T.textD, textTransform: "uppercase" }}>25d RR</div><div style={{ fontSize: 22, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", marginTop: 4, color: vd.riskReversal25d < 0 ? T.green : T.red }}>{vd.riskReversal25d > 0 ? "+" : ""}{vd.riskReversal25d}</div><div style={{ fontSize: 10, color: T.textD, marginTop: 2 }}>{vd.riskReversal25d < 0 ? "Calls pricier" : "Puts pricier"}</div></div>
+            </div>
+            <div style={{ padding: "12px 16px", background: vd.ivRank > 70 ? T.redBg : vd.ivRank > 50 ? T.amberBg : T.greenBg, border: `1px solid ${vd.ivRank > 70 ? T.redBd : vd.ivRank > 50 ? T.amberBd : T.greenBd}`, borderRadius: 8, fontSize: 13, color: T.text, lineHeight: 1.7 }}>
+              <strong style={{ color: vd.ivRank > 70 ? T.red : vd.ivRank > 50 ? T.amber : T.green }}>Volatility call: </strong>{vd.volCall}
+            </div>
+          </div>
+        )}
+        <div style={{ marginTop: 14, fontSize: 11, color: T.textD, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+          <ExternalLink size={12} /> Sources: <a href="https://investinglive.com/Orders" target="_blank" rel="noopener" style={{ color: T.cyan, textDecoration: "none" }}>InvestingLive (formerly ForexLive)</a> · <a href="https://www.cmegroup.com/tools-information/quikstrike/open-interest-heatmap.html" target="_blank" rel="noopener" style={{ color: T.blue, textDecoration: "none" }}>CME OI Heatmap</a>
+        </div>
+      </>
+    );
+
+    // ── Main render ───────────────────────────────────────────────────────
+    return (
+      <>
+        {/* Decision banner */}
+        <div style={{ background: T.bg2, borderRadius: 14, padding: "18px 22px", border: `1px solid ${decision.bd}`, marginBottom: 20, display: "flex", alignItems: "center", gap: 20, flexWrap: "wrap" }}>
+          <div style={{ flex: 1, minWidth: 200 }}>
+            <div style={{ fontSize: 11, color: T.textD, textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 4 }}>Combined conviction score — {sel}</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+              <div style={{ fontSize: 48, fontWeight: 900, fontFamily: "'JetBrains Mono',monospace", color: decision.color, lineHeight: 1 }}>{combined}</div>
+              <div>
+                <div style={{ fontSize: 18, fontWeight: 700, color: decision.color }}>{decision.label}</div>
+                <div style={{ fontSize: 12, color: T.textD, marginTop: 2 }}>out of 100 · weighted 35/30/35</div>
+              </div>
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            {[{ label: "COT", score: cotScore, w: "35%" }, { label: "Sentiment", score: sentScore, w: "30%" }, { label: "Options/Flow", score: pcrScore, w: "35%" }].map(p => {
+              const c = p.score > 55 ? T.green : p.score < 45 ? T.red : T.amber;
+              return (
+                <div key={p.label} style={{ textAlign: "center", padding: "10px 16px", background: T.bg, borderRadius: 10, border: `1px solid ${T.border}`, minWidth: 80 }}>
+                  <div style={{ fontSize: 10, color: T.textD, marginBottom: 3 }}>{p.label} · {p.w}</div>
+                  <div style={{ fontSize: 22, fontWeight: 800, fontFamily: "'JetBrains Mono',monospace", color: c }}>{p.score}</div>
+                  <div style={{ fontSize: 9, color: c, textTransform: "uppercase", marginTop: 1 }}>{p.score > 55 ? "Bull" : p.score < 45 ? "Bear" : "Neutral"}</div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Score bars */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 20 }}>
+          <ScoreBar score={cotScore} label="COT Positioning" weight={35} pillarColor={T.purple} />
+          <ScoreBar score={sentScore} label="Retail Sentiment" weight={30} pillarColor={T.amber} />
+          <ScoreBar score={pcrScore} label="Options / Flow" weight={35} pillarColor={T.blue} />
+        </div>
+
+        {/* Sub-tab nav */}
+        <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
+          <TabBtn id="overview" label="Combined Analysis" />
+          <TabBtn id="cot" label="COT Data" />
+          <TabBtn id="sentiment" label="Retail Sentiment" />
+          <TabBtn id="flow" label="Options & Flow" />
+        </div>
+
+        {posTab === "overview" && renderOverviewTab()}
+        {posTab === "cot" && renderCOTTab()}
+        {posTab === "sentiment" && renderSentimentTab()}
+        {posTab === "flow" && renderFlowTab()}
+      </>
+    );
+  };
 
   const renderCOT = () => (<>
 
@@ -1191,6 +1642,498 @@ Return ONLY valid JSON (no markdown):
     </>); })()}
   </>);
 
+  // ── Trade Lab ─────────────────────────────────────────────────────────────
+  const renderTradeLab = () => {
+    const instData = intelData?.instruments?.[sel];
+    const smc = instData?.smc;
+    const cotC = cotLive?.instruments?.[sel];
+    const inst = liveInstruments[sel];
+    const oo = OPTIONS_OI.instruments[sel];
+
+    // Scores
+    const cotScore = cotC?.score ?? 50;
+    const sentScore = 100 - inst.sentiment.retailLong;
+    const pcrScore = oo?.putCallRatio != null ? Math.round(Math.max(10, Math.min(90, 50 + (1.0 - oo.putCallRatio) * 38))) : 50;
+    const smcScore = smc?.score ?? 50;
+
+    // Weighted combined: SMC 40% + COT 25% + Sentiment 20% + Flow 15%
+    const totalScore = Math.round(smcScore * 0.40 + cotScore * 0.25 + sentScore * 0.20 + pcrScore * 0.15);
+
+    const getGrade = s => {
+      if (s >= 72) return { label: "A+ Setup", color: T.green,  bg: T.greenBg,  bd: T.greenBd  };
+      if (s >= 62) return { label: "A Setup",  color: T.green,  bg: T.greenBg,  bd: T.greenBd  };
+      if (s >= 52) return { label: "B Setup",  color: T.cyan,   bg: T.cyanBg,   bd: T.cyanBd   };
+      if (s >= 42) return { label: "C Setup",  color: T.amber,  bg: T.amberBg,  bd: T.amberBd  };
+      return               { label: "No Setup", color: T.textD, bg: T.bg3,      bd: T.border   };
+    };
+    const grade = getGrade(totalScore);
+
+    const isBull = instData?.trend === "BULLISH";
+    const isBear = instData?.trend === "BEARISH";
+    const dir = isBull ? "bullish" : isBear ? "bearish" : null;
+
+    const dp = sel.includes("JPY") ? 3 : sel.includes("BTC") ? 0 : 4;
+    const fp = v => typeof v === "number" ? v.toFixed(dp) : v;
+
+    const LabBtn = ({ id, label, icon: Icon }) => (
+      <button onClick={() => setLabTab(id)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 18px", borderRadius: 9, fontSize: 12, fontWeight: labTab === id ? 700 : 500, background: labTab === id ? T.bg4 : "transparent", border: `1px solid ${labTab === id ? T.borderL : T.border}`, color: labTab === id ? T.text : T.textD, cursor: "pointer" }}>
+        {Icon && <Icon size={13} />}{label}
+      </button>
+    );
+
+    const PatternBadge = ({ label, color, sub }) => (
+      <div style={{ display: "inline-flex", flexDirection: "column", alignItems: "center", padding: "6px 10px", borderRadius: 8, background: `${color}15`, border: `1px solid ${color}40`, gap: 2 }}>
+        <span style={{ fontSize: 11, fontWeight: 700, color, letterSpacing: 0.3 }}>{label}</span>
+        {sub && <span style={{ fontSize: 9, color: `${color}99`, textTransform: "uppercase" }}>{sub}</span>}
+      </div>
+    );
+
+    // ── Scanner tab: all instruments overview ────────────────────────────
+    const renderScanner = () => {
+      const allKeys = Object.keys(INSTRUMENTS).filter(k => intelData?.instruments?.[k]);
+      return (
+        <>
+          <div style={{ background: T.bg2, borderRadius: 12, padding: "14px 18px", border: `1px solid ${T.border}`, marginBottom: 20, fontSize: 12, color: T.textM, lineHeight: 1.7 }}>
+            <strong style={{ color: T.text }}>SMC Scanner</strong> analyses every instrument for active Smart Money patterns using live OHLC data.
+            {" "}Scores combine structure (BOS/CHoCH), order blocks in zone, fair value gaps, liquidity sweeps, COT positioning, retail sentiment, and options flow.
+            {" "}<strong style={{ color: T.cyan }}>A+/A</strong> = high-quality setup · <strong style={{ color: T.amber }}>B/C</strong> = partial confluence · <strong style={{ color: T.textD }}>No Setup</strong> = wait.
+          </div>
+          {intelData ? (
+            <div style={{ display: "grid", gap: 12 }}>
+              {allKeys.map(k => {
+                const d = intelData.instruments[k];
+                const sm = d?.smc;
+                const cot = cotLive?.instruments?.[k];
+                const inst2 = liveInstruments[k];
+                const ss = sm?.score ?? 50;
+                const cs = cot?.score ?? 50;
+                const se = 100 - inst2.sentiment.retailLong;
+                const oo2 = OPTIONS_OI.instruments[k];
+                const ps = oo2?.putCallRatio != null ? Math.round(Math.max(10, Math.min(90, 50 + (1.0 - oo2.putCallRatio) * 38))) : 50;
+                const ts = Math.round(ss * 0.40 + cs * 0.25 + se * 0.20 + ps * 0.15);
+                const g = getGrade(ts);
+                const patterns = [];
+                if (sm?.bos) patterns.push({ label: sm.bos.label, color: sm.bos.type === "bullish" ? T.green : T.red });
+                if (sm?.choch) patterns.push({ label: sm.choch.label, color: sm.choch.type === "bullish" ? T.cyan : T.amber });
+                if (sm?.bullishOBs?.some(o => o.inZone)) patterns.push({ label: "Bull OB", color: T.green });
+                if (sm?.bearishOBs?.some(o => o.inZone)) patterns.push({ label: "Bear OB", color: T.red });
+                if (sm?.breakerBlocks?.length) patterns.push({ label: "Breaker", color: T.purple });
+                if (sm?.bullishFVGs?.length) patterns.push({ label: `${sm.bullishFVGs.length}x Bull FVG`, color: T.green });
+                if (sm?.bearishFVGs?.length) patterns.push({ label: `${sm.bearishFVGs.length}x Bear FVG`, color: T.red });
+                const lastSweep = sm?.liquiditySweeps?.slice(-1)[0];
+                if (lastSweep) patterns.push({ label: lastSweep.type === "bullish" ? "Sweep ↑" : "Sweep ↓", color: lastSweep.type === "bullish" ? T.cyan : T.amber });
+                return (
+                  <div key={k} onClick={() => { setSel(k); setLabTab("builder"); }} style={{ background: T.bg2, borderRadius: 12, padding: "14px 18px", border: `1px solid ${ts >= 62 ? g.bd : T.border}`, cursor: "pointer", display: "grid", gridTemplateColumns: "120px 1fr auto", gap: 16, alignItems: "center" }}>
+                    <div>
+                      <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 2 }}>{k}</div>
+                      <div style={{ fontSize: 10, color: T.textD }}>{INSTRUMENTS[k].label}</div>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: d.trend === "BULLISH" ? T.green : d.trend === "BEARISH" ? T.red : T.amber, marginTop: 4 }}>{d.trend}</div>
+                    </div>
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                      {patterns.length > 0 ? patterns.map((p, i) => (
+                        <span key={i} style={{ fontSize: 10, fontWeight: 700, padding: "3px 8px", borderRadius: 5, background: `${p.color}15`, color: p.color, border: `1px solid ${p.color}30` }}>{p.label}</span>
+                      )) : <span style={{ fontSize: 11, color: T.textD }}>No active SMC patterns</span>}
+                    </div>
+                    <div style={{ textAlign: "center" }}>
+                      <div style={{ fontSize: 28, fontWeight: 900, fontFamily: "'JetBrains Mono',monospace", color: g.color }}>{ts}</div>
+                      <div style={{ fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 6, background: g.bg, color: g.color, border: `1px solid ${g.bd}`, marginTop: 4 }}>{g.label}</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div style={{ textAlign: "center", padding: 40, color: T.textD }}><Activity size={28} style={{ opacity: 0.4, marginBottom: 12 }} /><div>Loading intelligence data…</div></div>
+          )}
+        </>
+      );
+    };
+
+    // ── Builder tab: full SMC + macro confluence for selected instrument ──
+    const renderBuilder = () => {
+      if (!smc) return <div style={{ textAlign: "center", padding: 40, color: T.textD }}><Activity size={28} style={{ opacity: 0.4, marginBottom: 12 }} /><div style={{ fontSize: 12 }}>Intelligence data loading — switch timeframe on Chart Terminal to trigger a fetch.</div></div>;
+
+      // Auto trade plan from SMC
+      const signal = instData?.signal;
+      const atr = instData?.atr;
+      const current = instData?.current;
+
+      // Primary OB for entry
+      const entryOB = dir === "bullish" ? smc.bullishOBs?.find(o => o.inZone) : smc.bearishOBs?.find(o => o.inZone);
+      const entryFVG = dir === "bullish" ? smc.bullishFVGs?.[0] : smc.bearishFVGs?.[0];
+      const breakerSupport = dir === "bullish" ? smc.breakerBlocks?.find(b => b.flipType === "bullish_breaker") : smc.breakerBlocks?.find(b => b.flipType === "bearish_breaker");
+
+      const confluences = [];
+      if (smc.bos?.type === dir) confluences.push({ label: `BOS ${dir === "bullish" ? "↑" : "↓"} confirmed`, color: T.green, weight: "High" });
+      if (smc.choch?.type === dir) confluences.push({ label: `CHoCH ${dir === "bullish" ? "↑" : "↓"} — reversal signal`, color: T.cyan, weight: "High" });
+      if (entryOB) confluences.push({ label: `Price in ${dir === "bullish" ? "Bullish" : "Bearish"} OB zone`, color: T.purple, weight: "High" });
+      if (entryFVG) confluences.push({ label: `${dir === "bullish" ? "Bullish" : "Bearish"} FVG present @ ${fp(entryFVG.mid)}`, color: T.blue, weight: "Medium" });
+      if (breakerSupport) confluences.push({ label: `Breaker block as ${dir === "bullish" ? "support" : "resistance"} @ ${fp(breakerSupport.mid)}`, color: T.purple, weight: "Medium" });
+      const lastSweep = smc.liquiditySweeps?.slice(-1)[0];
+      if (lastSweep?.type === dir) confluences.push({ label: lastSweep.label, color: T.cyan, weight: "High" });
+      if (cotScore >= 58 && dir === "bullish") confluences.push({ label: `COT bullish (${cotScore}/100)`, color: T.purple, weight: "Medium" });
+      if (cotScore <= 42 && dir === "bearish") confluences.push({ label: `COT bearish (${cotScore}/100)`, color: T.purple, weight: "Medium" });
+      if (sentScore >= 60 && dir === "bullish") confluences.push({ label: `Contrarian: ${inst.sentiment.retailLong}% retail long → fade`, color: T.amber, weight: "Medium" });
+      if (sentScore <= 40 && dir === "bearish") confluences.push({ label: `Contrarian: ${inst.sentiment.retailShort}% retail short → fade`, color: T.amber, weight: "Medium" });
+      if (pcrScore >= 60 && dir === "bullish") confluences.push({ label: `Options bullish skew (PCR ${oo?.putCallRatio?.toFixed(2) ?? "N/A"})`, color: T.blue, weight: "Low" });
+      if (pcrScore <= 40 && dir === "bearish") confluences.push({ label: `Options bearish skew (PCR ${oo?.putCallRatio?.toFixed(2) ?? "N/A"})`, color: T.blue, weight: "Low" });
+
+      return (
+        <>
+          {/* Score header */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 16, background: T.bg2, borderRadius: 14, padding: "18px 22px", border: `1px solid ${grade.bd}`, marginBottom: 20 }}>
+            <div>
+              <div style={{ fontSize: 11, color: T.textD, textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 6 }}>Trade Lab — {sel} · {instData?.trend ?? "—"}</div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+                {[{ label: "SMC", score: smcScore, w: "40%", color: T.purple }, { label: "COT", score: cotScore, w: "25%", color: T.cyan }, { label: "Sentiment", score: sentScore, w: "20%", color: T.amber }, { label: "Flow", score: pcrScore, w: "15%", color: T.blue }].map(p => {
+                  const c = p.score > 55 ? T.green : p.score < 45 ? T.red : T.amber;
+                  return (
+                    <div key={p.label} style={{ textAlign: "center", padding: "8px 14px", background: T.bg, borderRadius: 8, border: `1px solid ${T.border}` }}>
+                      <div style={{ fontSize: 9, color: T.textD, marginBottom: 2 }}>{p.label} · {p.w}</div>
+                      <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'JetBrains Mono',monospace", color: c }}>{p.score}</div>
+                    </div>
+                  );
+                })}
+              </div>
+              <div style={{ fontSize: 12, color: T.textM }}>
+                {confluences.length} confluences detected ·{" "}
+                {smc.structureTrend && <span>Structure: <strong style={{ color: smc.structureTrend === "BULLISH" ? T.green : smc.structureTrend === "BEARISH" ? T.red : T.amber }}>{smc.structureTrend}</strong></span>}
+              </div>
+            </div>
+            <div style={{ textAlign: "center" }}>
+              <div style={{ fontSize: 52, fontWeight: 900, fontFamily: "'JetBrains Mono',monospace", color: grade.color, lineHeight: 1 }}>{totalScore}</div>
+              <div style={{ fontSize: 13, fontWeight: 700, padding: "4px 14px", borderRadius: 7, background: grade.bg, color: grade.color, border: `1px solid ${grade.bd}`, marginTop: 6 }}>{grade.label}</div>
+            </div>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
+            {/* Structure panel */}
+            <div style={s.cd}>
+              <div style={s.ct}><Activity size={14} />Market Structure</div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 14 }}>
+                <div style={{ background: T.bg, borderRadius: 8, padding: "10px 12px" }}>
+                  <div style={{ fontSize: 9, color: T.textD, textTransform: "uppercase", marginBottom: 4 }}>Structure trend</div>
+                  <div style={{ fontSize: 15, fontWeight: 800, color: smc.structureTrend === "BULLISH" ? T.green : smc.structureTrend === "BEARISH" ? T.red : T.amber }}>{smc.structureTrend}</div>
+                </div>
+                <div style={{ background: T.bg, borderRadius: 8, padding: "10px 12px" }}>
+                  <div style={{ fontSize: 9, color: T.textD, textTransform: "uppercase", marginBottom: 4 }}>Last swing high</div>
+                  <div style={{ fontSize: 15, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", color: T.red }}>{smc.lastSwingHigh ? fp(smc.lastSwingHigh) : "—"}</div>
+                </div>
+                <div style={{ background: T.bg, borderRadius: 8, padding: "10px 12px" }}>
+                  <div style={{ fontSize: 9, color: T.textD, textTransform: "uppercase", marginBottom: 4 }}>Last swing low</div>
+                  <div style={{ fontSize: 15, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", color: T.green }}>{smc.lastSwingLow ? fp(smc.lastSwingLow) : "—"}</div>
+                </div>
+                <div style={{ background: T.bg, borderRadius: 8, padding: "10px 12px" }}>
+                  <div style={{ fontSize: 9, color: T.textD, textTransform: "uppercase", marginBottom: 4 }}>Current price</div>
+                  <div style={{ fontSize: 15, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", color: T.text }}>{fp(current)}</div>
+                </div>
+              </div>
+              {smc.bos && <div style={{ padding: "10px 14px", borderRadius: 8, background: smc.bos.type === "bullish" ? T.greenBg : T.redBg, border: `1px solid ${smc.bos.type === "bullish" ? T.greenBd : T.redBd}`, marginBottom: 8 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: smc.bos.type === "bullish" ? T.green : T.red, marginBottom: 3 }}>{smc.bos.label} @ {fp(smc.bos.level)}</div>
+                <div style={{ fontSize: 11, color: T.textM }}>{smc.bos.note}</div>
+              </div>}
+              {smc.choch && <div style={{ padding: "10px 14px", borderRadius: 8, background: smc.choch.type === "bullish" ? T.cyanBg : T.amberBg, border: `1px solid ${smc.choch.type === "bullish" ? T.cyanBd : T.amberBd}` }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: smc.choch.type === "bullish" ? T.cyan : T.amber, marginBottom: 3 }}>{smc.choch.label} @ {fp(smc.choch.level)}</div>
+                <div style={{ fontSize: 11, color: T.textM }}>{smc.choch.note}</div>
+              </div>}
+              {!smc.bos && !smc.choch && <div style={{ fontSize: 11, color: T.textD, padding: "10px 0" }}>No BOS/CHoCH detected on this timeframe. Price is ranging between swing levels.</div>}
+            </div>
+
+            {/* Liquidity sweeps */}
+            <div style={s.cd}>
+              <div style={s.ct}><Zap size={14} />Liquidity Sweeps</div>
+              <div style={{ fontSize: 11, color: T.textM, lineHeight: 1.6, marginBottom: 12, padding: "8px 12px", background: `${T.amber}08`, borderRadius: 8, borderLeft: `3px solid ${T.amber}` }}>
+                Sweeps happen when price raids stop-loss clusters below swing lows (sell-side liquidity) or above swing highs (buy-side liquidity), then reverses. They reveal where smart money filled orders.
+              </div>
+              {smc.liquiditySweeps?.length > 0 ? smc.liquiditySweeps.map((sw, i) => (
+                <div key={i} style={{ padding: "10px 14px", borderRadius: 8, background: sw.type === "bullish" ? T.greenBg : T.redBg, border: `1px solid ${sw.type === "bullish" ? T.greenBd : T.redBd}`, marginBottom: 8 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: sw.type === "bullish" ? T.green : T.red }}>{sw.label}</span>
+                    <span style={{ fontSize: 10, color: T.textD }}>±{sw.magnitude?.toFixed(2)}%</span>
+                  </div>
+                  <div style={{ fontSize: 10, color: T.textM }}>{sw.note}</div>
+                  <div style={{ fontSize: 10, color: T.textD, marginTop: 4 }}>Level swept: {fp(sw.level)} · Wick: {sw.wickLow != null ? fp(sw.wickLow) : sw.wickHigh != null ? fp(sw.wickHigh) : "—"}</div>
+                </div>
+              )) : <div style={{ fontSize: 11, color: T.textD, padding: "10px 0" }}>No recent liquidity sweeps detected. Watch for stop hunts at {fp(smc.lastSwingHigh)} and {fp(smc.lastSwingLow)}.</div>}
+            </div>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
+            {/* Order Blocks */}
+            <div style={s.cd}>
+              <div style={s.ct}><Shield size={14} />Order Blocks & Breaker Blocks</div>
+              <div style={{ fontSize: 11, color: T.textM, lineHeight: 1.6, marginBottom: 12, padding: "8px 12px", background: `${T.purple}08`, borderRadius: 8, borderLeft: `3px solid ${T.purple}` }}>
+                Order Blocks are the last opposing candle before a strong impulse — they mark where institutions entered. Breaker Blocks are failed OBs that flipped polarity (former supply → demand or vice versa).
+              </div>
+              {[
+                ...(smc.bullishOBs || []).map(ob => ({ ...ob, displayType: "Bullish OB", color: T.green })),
+                ...(smc.bearishOBs || []).map(ob => ({ ...ob, displayType: "Bearish OB", color: T.red })),
+                ...(smc.breakerBlocks || []).map(b => ({ ...b, displayType: b.flipType === "bullish_breaker" ? "Bullish Breaker" : "Bearish Breaker", color: b.flipType === "bullish_breaker" ? T.cyan : T.purple })),
+              ].length > 0 ? [
+                ...(smc.bullishOBs || []).map(ob => ({ ...ob, displayType: "Bullish OB", color: T.green })),
+                ...(smc.bearishOBs || []).map(ob => ({ ...ob, displayType: "Bearish OB", color: T.red })),
+                ...(smc.breakerBlocks || []).map(b => ({ ...b, displayType: b.flipType === "bullish_breaker" ? "Bullish Breaker" : "Bearish Breaker", color: b.flipType === "bullish_breaker" ? T.cyan : T.purple })),
+              ].map((ob, i) => (
+                <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", background: ob.inZone ? `${ob.color}12` : T.bg, border: `1px solid ${ob.inZone ? ob.color + "50" : T.border}`, borderRadius: 8, marginBottom: 6 }}>
+                  <div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: ob.color }}>{ob.displayType}</span>
+                      {ob.inZone && <span style={{ fontSize: 9, fontWeight: 700, padding: "1px 6px", borderRadius: 3, background: ob.color, color: "#fff" }}>IN ZONE</span>}
+                    </div>
+                    <div style={{ fontSize: 10, color: T.textD }}>{fp(ob.low)} — {fp(ob.high)}</div>
+                    {ob.note && <div style={{ fontSize: 10, color: T.textM, marginTop: 2 }}>{ob.note}</div>}
+                  </div>
+                  <div style={{ textAlign: "right" }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, fontFamily: "'JetBrains Mono',monospace", color: ob.color }}>mid {fp(ob.mid)}</div>
+                  </div>
+                </div>
+              )) : <div style={{ fontSize: 11, color: T.textD }}>No significant order blocks detected in the lookback window.</div>}
+            </div>
+
+            {/* FVG */}
+            <div style={s.cd}>
+              <div style={s.ct}><Layers size={14} />Fair Value Gaps (Imbalances)</div>
+              <div style={{ fontSize: 11, color: T.textM, lineHeight: 1.6, marginBottom: 12, padding: "8px 12px", background: `${T.blue}08`, borderRadius: 8, borderLeft: `3px solid ${T.blue}` }}>
+                FVGs are 3-candle patterns where price moved so fast it left an untraded zone. Price tends to return to fill the gap. Unfilled gaps in the trend direction act as continuation targets.
+              </div>
+              {[
+                ...(smc.bullishFVGs || []).map(f => ({ ...f, displayType: "Bullish FVG", color: T.green })),
+                ...(smc.bearishFVGs || []).map(f => ({ ...f, displayType: "Bearish FVG", color: T.red })),
+              ].length > 0 ? [
+                ...(smc.bullishFVGs || []).map(f => ({ ...f, displayType: "Bullish FVG", color: T.green })),
+                ...(smc.bearishFVGs || []).map(f => ({ ...f, displayType: "Bearish FVG", color: T.red })),
+              ].map((f, i) => (
+                <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8, marginBottom: 6 }}>
+                  <div>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: f.color, marginBottom: 3 }}>{f.displayType}</div>
+                    <div style={{ fontSize: 10, color: T.textD }}>{fp(f.low)} — {fp(f.high)}</div>
+                    <div style={{ fontSize: 10, color: T.textM, marginTop: 2 }}>Gap size: {fp(Math.abs(f.high - f.low))} · Midpoint: {fp(f.mid)}</div>
+                  </div>
+                  <div style={{ textAlign: "right" }}>
+                    <div style={{ fontSize: 10, fontWeight: 600, padding: "3px 8px", borderRadius: 5, background: `${f.color}15`, color: f.color, border: `1px solid ${f.color}30` }}>UNFILLED</div>
+                  </div>
+                </div>
+              )) : <div style={{ fontSize: 11, color: T.textD }}>No unfilled FVGs detected in the lookback window.</div>}
+            </div>
+          </div>
+
+          {/* Confluence checklist */}
+          <div style={{ ...s.cd, marginBottom: 16 }}>
+            <div style={s.ct}><Target size={14} />Confluence Checklist — {dir ? dir.toUpperCase() : "No clear direction"}</div>
+            {confluences.length > 0 ? (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 8 }}>
+                {confluences.map((c, i) => (
+                  <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", background: `${c.color}08`, border: `1px solid ${c.color}25`, borderRadius: 8 }}>
+                    <div style={{ width: 8, height: 8, borderRadius: 4, background: c.color, flexShrink: 0 }} />
+                    <span style={{ fontSize: 12, color: T.text, flex: 1 }}>{c.label}</span>
+                    <span style={{ fontSize: 9, fontWeight: 700, padding: "2px 6px", borderRadius: 3, background: c.weight === "High" ? T.greenBg : c.weight === "Medium" ? T.amberBg : T.bg3, color: c.weight === "High" ? T.green : c.weight === "Medium" ? T.amber : T.textD, border: `1px solid ${c.weight === "High" ? T.greenBd : c.weight === "Medium" ? T.amberBd : T.border}` }}>{c.weight}</span>
+                  </div>
+                ))}
+              </div>
+            ) : <div style={{ fontSize: 12, color: T.textD, padding: "10px 0" }}>No confluences aligned for a directional trade. Market is in a ranging/neutral state — wait for clearer structure.</div>}
+          </div>
+
+          {/* Trade plan */}
+          {signal && (
+            <div style={{ ...s.cd, border: `1px solid ${signal.direction === "BUY" ? T.greenBd : T.redBd}` }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+                <div style={s.ct}><Zap size={14} />Generated Trade Plan — {sel}</div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <span style={{ fontSize: 13, fontWeight: 700, padding: "4px 14px", borderRadius: 7, background: signal.direction === "BUY" ? T.greenBg : T.redBg, color: signal.direction === "BUY" ? T.green : T.red, border: `1px solid ${signal.direction === "BUY" ? T.greenBd : T.redBd}` }}>{signal.direction}</span>
+                  <span style={{ fontSize: 11, fontWeight: 600, padding: "4px 12px", borderRadius: 7, background: T.purpleBg, color: T.purple, border: `1px solid ${T.purpleBd}` }}>Conf: {signal.confidence}%</span>
+                </div>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 8, marginBottom: 14 }}>
+                {[
+                  { l: "Entry", v: fp(signal.entry), color: T.text },
+                  { l: "Stop Loss", v: fp(signal.sl), color: T.red },
+                  { l: "TP1", v: fp(signal.tp1), color: T.cyan },
+                  { l: "TP2", v: fp(signal.tp2), color: T.green },
+                  { l: "TP3", v: fp(signal.tp3), color: T.green },
+                  { l: "R:R", v: signal.rr, color: T.amber },
+                ].map(item => (
+                  <div key={item.l} style={{ background: T.bg, borderRadius: 8, padding: "10px 12px", textAlign: "center" }}>
+                    <div style={{ fontSize: 9, color: T.textD, textTransform: "uppercase", marginBottom: 4 }}>{item.l}</div>
+                    <div style={{ fontSize: 13, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", color: item.color }}>{item.v}</div>
+                  </div>
+                ))}
+              </div>
+              {entryOB && <div style={{ fontSize: 12, color: T.textM, marginBottom: 8 }}><strong style={{ color: T.purple }}>Entry zone:</strong> {signal.direction === "BUY" ? "Bullish" : "Bearish"} OB at {fp(entryOB.low)}–{fp(entryOB.high)} — wait for price to tap into this zone before entering.</div>}
+              {lastSweep && lastSweep.type === dir && <div style={{ fontSize: 12, color: T.textM, marginBottom: 8 }}><strong style={{ color: T.cyan }}>Sweep confirmation:</strong> Recent {lastSweep.label} gives high-probability reversal context. Enter after sweep candle closes.</div>}
+              <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+                <button onClick={() => { setNewSig({ instrument: sel, direction: signal.direction === "BUY" ? "Long" : "Short", entryPrice: String(signal.entry), targetPrice: String(signal.tp2), stopLoss: String(signal.sl), confidence: Math.round(signal.confidence / 10), notes: `SMC setup: ${confluences.map(c => c.label).join("; ")}`, bias: signal.direction === "BUY" ? "Bullish" : "Bearish", riskReward: signal.rr }); setLabTab("signals"); }} style={{ ...s.btn(T.accent, "#fff"), fontSize: 12 }}><Plus size={13} />Log to Signals</button>
+                <button onClick={() => { setNewE({ instrument: sel, direction: signal.direction === "BUY" ? "Long" : "Short", notes: `SMC setup: ${confluences.map(c => c.label).join("; ")}`, confidence: 4 }); setLabTab("journal"); }} style={{ ...s.btn(T.bg3, T.textM), fontSize: 12, border: `1px solid ${T.border}` }}><BookOpen size={13} />Add to Journal</button>
+              </div>
+            </div>
+          )}
+        </>
+      );
+    };
+
+    // ── Signals tab ───────────────────────────────────────────────────────
+    const renderSignalsTab = () => {
+      const openSigs = signals.filter(sg => sg.status === "OPEN");
+      const closedSigs = signals.filter(sg => sg.status === "CLOSED");
+      const wins = closedSigs.filter(sg => (calcPnL(sg, liveData) || 0) > 0).length;
+      const winRate = closedSigs.length > 0 ? ((wins / closedSigs.length) * 100).toFixed(0) : null;
+      const totalClosedPnL = closedSigs.reduce((acc, sg) => acc + (calcPnL(sg, liveData) || 0), 0);
+      const openPnL = openSigs.reduce((acc, sg) => acc + (calcPnL(sg, liveData) || 0), 0);
+      const equityCurve = closedSigs.slice().sort((a, b) => new Date(a.closedAt) - new Date(b.closedAt)).reduce((acc, sg, i) => {
+        const prev = acc[i - 1]?.cumPnL || 0;
+        const pnl = calcPnL(sg, liveData) || 0;
+        acc.push({ label: new Date(sg.closedAt).toLocaleDateString("en-GB", { day: "2-digit", month: "short" }), cumPnL: parseFloat((prev + pnl).toFixed(2)), pnl: parseFloat(pnl.toFixed(2)) });
+        return acc;
+      }, []);
+      const pnlColor = v => v >= 0 ? T.green : T.red;
+      const inp = { background: T.bg, border: `1px solid ${T.border}`, color: T.text, fontSize: 12, padding: "7px 10px", borderRadius: 7, width: "100%" };
+      return (
+        <>
+          <div style={s.g4}>
+            <div style={s.cd}><div style={{ fontSize: 11, color: T.textD, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 6 }}>Total Signals</div><div style={{ fontSize: 28, fontWeight: 700 }}>{signals.length}</div><div style={{ fontSize: 11, color: T.textM }}>{openSigs.length} open · {closedSigs.length} closed</div></div>
+            <div style={s.cd}><div style={{ fontSize: 11, color: T.textD, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 6 }}>Win Rate</div><div style={{ fontSize: 28, fontWeight: 700, color: winRate >= 50 ? T.green : winRate !== null ? T.red : T.textD }}>{winRate !== null ? winRate + "%" : "—"}</div><div style={{ fontSize: 11, color: T.textM }}>{wins}W / {closedSigs.length - wins}L</div></div>
+            <div style={s.cd}><div style={{ fontSize: 11, color: T.textD, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 6 }}>Closed P&L</div><div style={{ fontSize: 28, fontWeight: 700, color: pnlColor(totalClosedPnL) }}>{totalClosedPnL >= 0 ? "+" : ""}{totalClosedPnL.toFixed(2)}%</div></div>
+            <div style={s.cd}><div style={{ fontSize: 11, color: T.textD, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 6 }}>Open P&L</div><div style={{ fontSize: 28, fontWeight: 700, color: pnlColor(openPnL) }}>{openPnL >= 0 ? "+" : ""}{openPnL.toFixed(2)}%</div></div>
+          </div>
+          <div style={{ ...s.cd, marginTop: 16 }}>
+            <div style={s.ct}><Plus size={14} />Log New Signal</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 10, marginBottom: 10 }}>
+              <div><label style={{ fontSize: 10, color: T.textD, display: "block", marginBottom: 3 }}>Instrument</label><select value={newSig.instrument} onChange={e => setNewSig({ ...newSig, instrument: e.target.value })} style={inp}>{Object.keys(INSTRUMENTS).map(k => <option key={k}>{k}</option>)}</select></div>
+              <div><label style={{ fontSize: 10, color: T.textD, display: "block", marginBottom: 3 }}>Direction</label><select value={newSig.direction} onChange={e => setNewSig({ ...newSig, direction: e.target.value })} style={inp}><option>Long</option><option>Short</option></select></div>
+              <div><label style={{ fontSize: 10, color: T.textD, display: "block", marginBottom: 3 }}>Bias</label><select value={newSig.bias} onChange={e => setNewSig({ ...newSig, bias: e.target.value })} style={inp}><option>Bullish</option><option>Bearish</option><option>Neutral</option></select></div>
+              <div><label style={{ fontSize: 10, color: T.textD, display: "block", marginBottom: 3 }}>Confidence (1-10)</label><input type="number" min={1} max={10} value={newSig.confidence} onChange={e => setNewSig({ ...newSig, confidence: +e.target.value })} style={inp} /></div>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 10, marginBottom: 10 }}>
+              <div><label style={{ fontSize: 10, color: T.textD, display: "block", marginBottom: 3 }}>Entry Price</label><input type="number" step="any" value={newSig.entryPrice} onChange={e => setNewSig({ ...newSig, entryPrice: e.target.value })} placeholder={liveData[newSig.instrument]?.price || "0"} style={inp} /></div>
+              <div><label style={{ fontSize: 10, color: T.textD, display: "block", marginBottom: 3 }}>Target Price</label><input type="number" step="any" value={newSig.targetPrice} onChange={e => setNewSig({ ...newSig, targetPrice: e.target.value })} style={inp} /></div>
+              <div><label style={{ fontSize: 10, color: T.textD, display: "block", marginBottom: 3 }}>Stop Loss</label><input type="number" step="any" value={newSig.stopLoss} onChange={e => setNewSig({ ...newSig, stopLoss: e.target.value })} style={inp} /></div>
+              <div><label style={{ fontSize: 10, color: T.textD, display: "block", marginBottom: 3 }}>R:R</label><input type="text" value={newSig.riskReward || ""} onChange={e => setNewSig({ ...newSig, riskReward: e.target.value })} placeholder="e.g. 1:2.5" style={inp} /></div>
+            </div>
+            <textarea value={newSig.notes} onChange={e => setNewSig({ ...newSig, notes: e.target.value })} placeholder="Trade thesis (SMC setup, COT context, sentiment…)" rows={2} style={{ ...inp, width: "100%", resize: "vertical", marginBottom: 10, fontFamily: "inherit" }} />
+            <button onClick={async () => { if (!newSig.entryPrice) return; await createSignal({ ...newSig, entryPrice: newSig.entryPrice || liveData[newSig.instrument]?.price }); setNewSig({ instrument: "XAUUSD", direction: "Long", entryPrice: "", targetPrice: "", stopLoss: "", confidence: 7, notes: "", bias: "Neutral", riskReward: "", validFor: "", aiSummary: "" }); }} disabled={signalsLoading || !newSig.entryPrice} style={{ ...s.btn(T.accent, "#fff"), opacity: (!newSig.entryPrice || signalsLoading) ? 0.5 : 1 }}><Plus size={13} />{signalsLoading ? "Saving…" : "Log Signal"}</button>
+          </div>
+          {userTrades.length > 0 && <div style={{ ...s.cd, marginTop: 16, border: `1px solid ${T.purple}40` }}>
+            <div style={{ ...s.ct, color: T.purple }}><Activity size={14} />Live Session Trades ({userTrades.length})</div>
+            <div style={{ overflowX: "auto" }}><table style={{ ...s.tb, minWidth: 700 }}><thead><tr>{["Pair", "Dir", "Entry", "Current", "Lot", "P&L %", "Opened", ""].map(h => <th key={h} style={s.th}>{h}</th>)}</tr></thead><tbody>{userTrades.map(t => { const cur = liveData[t.instr]?.price; const pnl = cur ? ((cur - t.entry) / t.entry) * 100 * (t.dir === "BUY" ? 1 : -1) : 0; return <tr key={t.id}><td style={{ ...s.td, fontWeight: 700 }}>{t.instr}</td><td style={{ ...s.td, color: t.dir === "BUY" ? T.green : T.red, fontWeight: 600 }}>{t.dir}</td><td style={s.td}>{t.entry}</td><td style={{ ...s.td, color: T.cyan }}>{cur || "—"}</td><td style={s.td}>{t.lot}</td><td style={{ ...s.td, fontWeight: 700, color: pnlColor(pnl) }}>{pnl >= 0 ? "+" : ""}{pnl.toFixed(2)}%</td><td style={{ ...s.td, color: T.textD, fontSize: 11 }}>{new Date(t.timestamp).toLocaleTimeString()}</td><td style={s.td}><button onClick={() => setUserTrades(userTrades.filter(it => it.id !== t.id))} style={{ ...s.btn(T.redBg, T.red), padding: "4px 8px", border: `1px solid ${T.redBd}` }}>Close</button></td></tr>; })}</tbody></table></div>
+          </div>}
+          {openSigs.length > 0 && <div style={{ ...s.cd, marginTop: 16 }}>
+            <div style={s.ct}><Radio size={14} />Open Signals ({openSigs.length})</div>
+            <div style={{ overflowX: "auto" }}><table style={{ ...s.tb, minWidth: 700 }}><thead><tr>{["Pair", "Dir", "Entry", "Current", "Target", "Stop", "P&L %", "Conf", "Logged", ""].map(h => <th key={h} style={s.th}>{h}</th>)}</tr></thead><tbody>{openSigs.map(sg => { const pnl = calcPnL(sg, liveData); const cur = liveData[sg.instrument]?.price; return <tr key={sg.id}><td style={{ ...s.td, fontWeight: 700 }}>{sg.instrument}</td><td style={{ ...s.td, color: sg.direction === "Long" ? T.green : T.red, fontWeight: 600 }}>{sg.direction}</td><td style={s.td}>{sg.entryPrice}</td><td style={{ ...s.td, color: T.cyan }}>{cur || "—"}</td><td style={{ ...s.td, color: T.green }}>{sg.targetPrice || "—"}</td><td style={{ ...s.td, color: T.red }}>{sg.stopLoss || "—"}</td><td style={{ ...s.td, fontWeight: 700, color: pnl === null ? T.text : pnlColor(pnl) }}>{pnl === null ? "—" : `${pnl >= 0 ? "+" : ""}${pnl.toFixed(2)}%`}</td><td style={s.td}>{sg.confidence}/10</td><td style={{ ...s.td, color: T.textD, fontSize: 11 }}>{new Date(sg.createdAt).toLocaleDateString()}</td><td style={s.td}>{closeForm?.id === sg.id ? <div style={{ display: "flex", gap: 4 }}><input type="number" step="any" value={closeForm.exitPrice} onChange={e => setCloseForm({ ...closeForm, exitPrice: e.target.value })} style={{ ...inp, width: 80, padding: "3px 6px" }} /><button onClick={() => closeSignal(sg.id, parseFloat(closeForm.exitPrice))} style={{ ...s.btn(T.green, "#fff"), padding: "3px 8px", fontSize: 11 }}>✓</button><button onClick={() => setCloseForm(null)} style={{ ...s.btn(T.bg3, T.textM), padding: "3px 6px", fontSize: 11 }}>✕</button></div> : <div style={{ display: "flex", gap: 4 }}><button onClick={() => setCloseForm({ id: sg.id, exitPrice: cur || "" })} style={{ ...s.btn(T.amberBg, T.amber), padding: "3px 8px", fontSize: 11, border: `1px solid ${T.amberBd}` }}>Close</button><button onClick={() => deleteSignal(sg.id)} style={{ ...s.btn(T.redBg, T.red), padding: "3px 6px", border: `1px solid ${T.redBd}` }}><Trash2 size={11} /></button></div>}</td></tr>; })}</tbody></table></div>
+          </div>}
+          {equityCurve.length > 1 && <div style={{ ...s.cd, marginTop: 16 }}>
+            <div style={s.ct}><TrendingUp size={14} />Equity Curve</div>
+            <ResponsiveContainer width="100%" height={190}><AreaChart data={equityCurve} margin={{ top: 5, right: 10, bottom: 5, left: 0 }}><defs><linearGradient id="eqGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor={T.green} stopOpacity={0.3} /><stop offset="95%" stopColor={T.green} stopOpacity={0} /></linearGradient></defs><CartesianGrid strokeDasharray="3 3" stroke={T.border} /><XAxis dataKey="label" tick={{ fill: T.textD, fontSize: 10 }} /><YAxis tick={{ fill: T.textD, fontSize: 10 }} tickFormatter={v => `${v > 0 ? "+" : ""}${v}%`} /><Tooltip contentStyle={{ background: T.bg2, border: `1px solid ${T.border}`, borderRadius: 8, fontSize: 12 }} formatter={v => [`${v >= 0 ? "+" : ""}${v}%`, "Cum P&L"]} /><Area type="monotone" dataKey="cumPnL" stroke={T.green} fill="url(#eqGrad)" strokeWidth={2} dot={{ fill: T.green, r: 3 }} /></AreaChart></ResponsiveContainer>
+          </div>}
+          {closedSigs.length > 0 && <div style={{ ...s.cd, marginTop: 16 }}>
+            <div style={s.ct}><BookOpen size={14} />Closed History ({closedSigs.length})</div>
+            <div style={{ overflowX: "auto" }}><table style={{ ...s.tb, minWidth: 700 }}><thead><tr>{["Pair", "Dir", "Entry", "Exit", "P&L %", "R:R", "Conf", "Opened", "Closed", "Bias"].map(h => <th key={h} style={s.th}>{h}</th>)}</tr></thead><tbody>{closedSigs.map(sg => { const pnl = calcPnL(sg, liveData); return <tr key={sg.id} style={{ opacity: 0.85 }}><td style={{ ...s.td, fontWeight: 700 }}>{sg.instrument}</td><td style={{ ...s.td, color: sg.direction === "Long" ? T.green : T.red, fontWeight: 600 }}>{sg.direction}</td><td style={s.td}>{sg.entryPrice}</td><td style={s.td}>{sg.exitPrice || "—"}</td><td style={{ ...s.td, fontWeight: 700, color: pnl === null ? T.textD : pnlColor(pnl) }}>{pnl === null ? "—" : `${pnl >= 0 ? "+" : ""}${pnl.toFixed(2)}%`}</td><td style={s.td}>{sg.riskReward || "—"}</td><td style={s.td}>{sg.confidence}/10</td><td style={{ ...s.td, fontSize: 11, color: T.textD }}>{new Date(sg.createdAt).toLocaleDateString()}</td><td style={{ ...s.td, fontSize: 11, color: T.textD }}>{sg.closedAt ? new Date(sg.closedAt).toLocaleDateString() : "—"}</td><td style={{ ...s.td, color: sg.bias === "Bullish" ? T.green : sg.bias === "Bearish" ? T.red : T.amber, fontSize: 11 }}>{sg.bias || "—"}</td></tr>; })}</tbody></table></div>
+          </div>}
+        </>
+      );
+    };
+
+    // ── Journal tab ───────────────────────────────────────────────────────
+    const renderJournalTab = () => (
+      <>
+        <div style={s.cd}>
+          <div style={s.ct}><Plus size={14} />New trade idea</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr auto", gap: 10, alignItems: "end" }}>
+            <div><label style={{ fontSize: 10, color: T.textD, display: "block", marginBottom: 3 }}>Instrument</label><select value={newE.instrument} onChange={e => setNewE({ ...newE, instrument: e.target.value })} style={{ width: "100%", padding: "7px 10px", borderRadius: 7, background: T.bg, border: `1px solid ${T.border}`, color: T.text, fontSize: 12 }}>{Object.keys(INSTRUMENTS).map(k => <option key={k} value={k}>{k}</option>)}</select></div>
+            <div><label style={{ fontSize: 10, color: T.textD, display: "block", marginBottom: 3 }}>Direction</label><select value={newE.direction} onChange={e => setNewE({ ...newE, direction: e.target.value })} style={{ width: "100%", padding: "7px 10px", borderRadius: 7, background: T.bg, border: `1px solid ${T.border}`, color: T.text, fontSize: 12 }}><option>Long</option><option>Short</option></select></div>
+            <div><label style={{ fontSize: 10, color: T.textD, display: "block", marginBottom: 3 }}>Confidence</label><select value={newE.confidence} onChange={e => setNewE({ ...newE, confidence: +e.target.value })} style={{ width: "100%", padding: "7px 10px", borderRadius: 7, background: T.bg, border: `1px solid ${T.border}`, color: T.text, fontSize: 12 }}>{[1, 2, 3, 4, 5].map(n => <option key={n} value={n}>{n}</option>)}</select></div>
+            <button onClick={addE} style={{ ...s.btn(T.accent, "#fff"), height: 34 }}>Add</button>
+          </div>
+          <div style={{ marginTop: 10 }}><textarea value={newE.notes} onChange={e => setNewE({ ...newE, notes: e.target.value })} placeholder="Trade thesis: SMC pattern, COT + sentiment + option flow rationale…" rows={3} style={{ width: "100%", padding: "9px 10px", borderRadius: 7, background: T.bg, border: `1px solid ${T.border}`, color: T.text, fontSize: 12, resize: "vertical", fontFamily: "inherit" }} /></div>
+        </div>
+        <div style={{ ...s.cd, marginTop: 16 }}>
+          <div style={s.ct}><BookOpen size={14} />Trade ideas ({journal.length})</div>
+          {journal.length === 0 ? <div style={{ textAlign: "center", padding: 30, color: T.textD, fontSize: 12 }}><BookOpen size={24} style={{ marginBottom: 8, opacity: 0.4 }} /><div>No entries yet. Persists across sessions.</div></div> :
+            journal.map(e => (
+              <div key={e.id} style={{ display: "flex", gap: 10, padding: 14, background: T.bg, borderRadius: 10, border: `1px solid ${T.border}`, marginBottom: 8, alignItems: "flex-start" }}>
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3, minWidth: 56 }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: e.direction === "Long" ? T.green : T.red }}>{e.direction}</span>
+                  <span style={{ fontSize: 11, fontWeight: 600 }}>{e.instrument}</span>
+                  <div style={{ display: "flex", gap: 2 }}>{[1, 2, 3, 4, 5].map(n => <div key={n} style={{ width: 5, height: 5, borderRadius: 3, background: n <= e.confidence ? T.accent : T.bg3 }} />)}</div>
+                </div>
+                <div style={{ flex: 1 }}><div style={{ fontSize: 12, lineHeight: 1.6, color: T.textM }}>{e.notes}</div><div style={{ fontSize: 10, color: T.textD, marginTop: 4 }}><Clock size={10} style={{ display: "inline", verticalAlign: "middle", marginRight: 3 }} />{new Date(e.timestamp).toLocaleString()}</div></div>
+                <div style={{ display: "flex", gap: 5 }}>
+                  <button onClick={() => saveJ(journal.map(x => x.id === e.id ? { ...x, status: x.status === "Open" ? "Closed" : "Open" } : x))} style={{ padding: "3px 8px", borderRadius: 5, fontSize: 10, fontWeight: 600, background: e.status === "Open" ? T.greenBg : T.bg3, color: e.status === "Open" ? T.green : T.textD, border: `1px solid ${e.status === "Open" ? T.greenBd : T.border}`, cursor: "pointer" }}>{e.status}</button>
+                  <button onClick={() => saveJ(journal.filter(x => x.id !== e.id))} style={{ padding: "3px 6px", borderRadius: 5, background: T.redBg, color: T.red, border: `1px solid ${T.redBd}`, cursor: "pointer", display: "flex", alignItems: "center" }}><Trash2 size={11} /></button>
+                </div>
+              </div>
+            ))}
+        </div>
+      </>
+    );
+
+    // ── AI Strategy builder ────────────────────────────────────────────────
+    const renderStrategyTab = () => (
+      <>
+        <div style={s.cd}>
+          <div style={s.ct}><Shield size={14} />Strategy rules — {STRATEGY_RULES.length} rules across 5 pillars</div>
+          {Object.entries(cats).map(([k, c]) => (
+            <div key={k} style={{ marginBottom: 14 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: c.color, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}><div style={{ width: 8, height: 8, borderRadius: 4, background: c.color }} />{c.label}</div>
+              {STRATEGY_RULES.filter(r => r.category === k).map(r => (
+                <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", background: T.bg, borderRadius: 8, marginBottom: 6, border: `1px solid ${T.border}` }}>
+                  <div style={{ width: 28, height: 28, borderRadius: 7, background: `${c.color}15`, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 13, color: c.color, flexShrink: 0 }}>{r.id}</div>
+                  <div style={{ flex: 1 }}><div style={{ fontSize: 13, fontWeight: 600 }}>{r.name}</div><div style={{ fontSize: 11, color: T.textM }}>{r.desc}</div></div>
+                  <div style={{ display: "flex", gap: 3 }}>{[1, 2, 3].map(w => <div key={w} style={{ width: 7, height: 7, borderRadius: 4, background: w <= r.weight ? c.color : T.bg3 }} />)}</div>
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+        <div style={{ ...s.cd, marginTop: 16 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+            <div style={s.ct}><Zap size={14} />AI analysis — {sel}</div>
+            <button onClick={runAi} disabled={aiLoading} style={{ ...s.btn(T.accent, "#fff"), opacity: aiLoading ? 0.6 : 1 }}><RefreshCw size={13} style={aiLoading ? { animation: "spin 1s linear infinite" } : {}} />{aiLoading ? "Analyzing…" : "Run AI analysis"}</button>
+          </div>
+          {aiData ? (
+            <div style={{ background: T.bg, borderRadius: 10, padding: 18, border: `1px solid ${T.borderL}` }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
+                <span style={{ padding: "2px 10px", borderRadius: 5, fontSize: 11, fontWeight: 600, background: aiData.bias === "Bullish" ? T.greenBg : aiData.bias === "Bearish" ? T.redBg : T.amberBg, color: aiData.bias === "Bullish" ? T.green : aiData.bias === "Bearish" ? T.red : T.amber }}>{aiData.bias || "N/A"}</span>
+                {aiData.confidence && <span style={{ fontSize: 11, color: T.purple, fontWeight: 600 }}>Confidence {aiData.confidence}/10</span>}
+                {aiData.riskReward && <span style={{ fontSize: 11, color: T.cyan }}>R:R {aiData.riskReward}</span>}
+                {lastRef && <span style={{ fontSize: 10, color: T.textD, marginLeft: "auto" }}>{new Date(lastRef).toLocaleString()}</span>}
+              </div>
+              <div style={{ fontSize: 13, lineHeight: 1.7, color: T.text, marginBottom: 10 }}>{aiData.summary}</div>
+              {(aiData.entryZone || aiData.target || aiData.stopLoss) && (
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 12 }}>
+                  {aiData.entryZone && <div style={{ padding: "8px 12px", background: T.bg2, borderRadius: 8, border: `1px solid ${T.border}` }}><div style={{ fontSize: 10, color: T.textD, marginBottom: 2 }}>ENTRY ZONE</div><div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 13, color: T.text, fontWeight: 600 }}>{aiData.entryZone}</div></div>}
+                  {aiData.target && <div style={{ padding: "8px 12px", background: T.greenBg, borderRadius: 8, border: `1px solid ${T.greenBd}` }}><div style={{ fontSize: 10, color: T.green, marginBottom: 2 }}>TARGET</div><div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 13, color: T.green, fontWeight: 600 }}>{aiData.target}</div></div>}
+                  {aiData.stopLoss && <div style={{ padding: "8px 12px", background: T.redBg, borderRadius: 8, border: `1px solid ${T.redBd}` }}><div style={{ fontSize: 10, color: T.red, marginBottom: 2 }}>STOP LOSS</div><div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 13, color: T.red, fontWeight: 600 }}>{aiData.stopLoss}</div></div>}
+                </div>
+              )}
+              {aiData.cotUpdate && <div style={{ fontSize: 12, color: T.textM, marginBottom: 4 }}><strong style={{ color: T.text }}>COT:</strong> {aiData.cotUpdate}</div>}
+              {aiData.sentimentUpdate && <div style={{ fontSize: 12, color: T.textM, marginBottom: 4 }}><strong style={{ color: T.text }}>Sentiment:</strong> {aiData.sentimentUpdate}</div>}
+              {aiData.catalysts && aiData.catalysts.length > 0 && <div style={{ fontSize: 12, color: T.textM, marginBottom: 4 }}><strong style={{ color: T.amber }}>Catalysts:</strong> {aiData.catalysts.join(" · ")}</div>}
+              <div style={{ marginTop: 14, paddingTop: 12, borderTop: `1px solid ${T.border}` }}>
+                <button onClick={() => { const entry = aiData.entryZone ? aiData.entryZone.split("-")[0].trim() : (liveData[aiData.instrument || sel]?.price || ""); setNewSig({ instrument: aiData.instrument || sel, direction: aiData.bias === "Bearish" ? "Short" : "Long", entryPrice: String(entry), targetPrice: aiData.target || "", stopLoss: aiData.stopLoss || "", confidence: Math.min(10, Math.max(1, aiData.confidence || 7)), notes: aiData.summary || "", bias: aiData.bias || "Neutral", riskReward: aiData.riskReward || "" }); setLabTab("signals"); }} style={{ ...s.btn(T.accent, "#fff"), fontSize: 12 }}><Plus size={13} />Log as Signal</button>
+              </div>
+            </div>
+          ) : <div style={{ textAlign: "center", padding: 30, color: T.textD }}><Brain size={28} style={{ marginBottom: 10, opacity: 0.4 }} /><div style={{ fontSize: 12 }}>Run AI analysis for live COT + sentiment + SMC entry levels</div></div>}
+        </div>
+      </>
+    );
+
+    return (
+      <>
+        <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
+          <LabBtn id="scanner" label="SMC Scanner" icon={Activity} />
+          <LabBtn id="builder" label="Trade Builder" icon={Target} />
+          <LabBtn id="signals" label="Signals" icon={Radio} />
+          <LabBtn id="journal" label="Trade Journal" icon={BookOpen} />
+          <LabBtn id="strategy" label="AI Strategy" icon={Brain} />
+        </div>
+        {labTab === "scanner"  && renderScanner()}
+        {labTab === "builder"  && renderBuilder()}
+        {labTab === "signals"  && renderSignalsTab()}
+        {labTab === "journal"  && renderJournalTab()}
+        {labTab === "strategy" && renderStrategyTab()}
+      </>
+    );
+  };
+
   const cats = {positioning:{label:"COT positioning",color:T.purple},sentiment:{label:"Sentiment",color:T.amber},orderflow:{label:"Order flow",color:T.cyan},options:{label:"Options OI & put/call",color:T.blue},volatility:{label:"Volatility",color:"#f97316"}};
   const renderStrategy = () => (<>
     <div style={s.cd}>
@@ -1231,7 +2174,7 @@ Return ONLY valid JSON (no markdown):
           <button onClick={()=>{
             const entry = aiData.entryZone ? aiData.entryZone.split("-")[0].trim() : (liveData[aiData.instrument||sel]?.price||"");
             setNewSig({ instrument: aiData.instrument||sel, direction: aiData.bias==="Bearish"?"Short":"Long", entryPrice: String(entry), targetPrice: aiData.target||"", stopLoss: aiData.stopLoss||"", confidence: Math.min(10, Math.max(1, aiData.confidence||7)), notes: aiData.summary||"", bias: aiData.bias||"Neutral", riskReward: aiData.riskReward||"", validFor: aiData.validFor||"", aiSummary: aiData.summary||"" });
-            setView("signals");
+            setView("tradelab"); setLabTab("signals");
           }} style={{...s.btn(T.accent,"#fff"),fontSize:12}}><Plus size={13}/>Log as Signal</button>
         </div>
       </div>):(<div style={{textAlign:"center",padding:30,color:T.textD}}><Brain size={28} style={{marginBottom:10,opacity:0.4}}/><div style={{fontSize:12}}>Run AI analysis for live COT + sentiment + option flow + entry levels</div></div>)}
@@ -1461,16 +2404,12 @@ Return ONLY valid JSON (no markdown):
         </div>
       </header>
       <nav style={s.nav}>{VIEWS.map(v=>{const I=VIEW_ICONS[v];return <button key={v} style={s.ni(view===v)} onClick={()=>setView(v)}><I size={13}/>{VIEW_LABELS[v]}</button>})}</nav>
-      {view!=="overview"&&view!=="signals"&&view!=="journal"&&view!=="intelligence"&&<div style={s.ib}>{Object.keys(INSTRUMENTS).map(k=><div key={k} style={s.ic(sel===k)} onClick={()=>setSel(k)}>{k}</div>)}</div>}
+      {view!=="overview"&&view!=="intelligence"&&<div style={s.ib}>{Object.keys(INSTRUMENTS).filter(k=>view!=="marketintel"||k!=="EURUSD").map(k=><div key={k} style={s.ic(sel===k)} onClick={()=>{setSel(k);setPosTab("overview");}}>{k}</div>)}</div>}
       <main style={view==="intelligence"?{padding:0,flex:1,display:"flex",flexDirection:"column",minHeight:0,overflow:"hidden"}:{...s.mn,flex:1,overflowY:"auto"}}>
         {view==="overview"&&renderOverview()}
         {view==="intelligence"&&<TradingIntelligence />}
-        {view==="cot"&&renderCOT()}
-        {view==="sentiment"&&renderSentiment()}
-        {view==="orderflow"&&renderOrderFlow()}
-        {view==="strategy"&&renderStrategy()}
-        {view==="signals"&&renderSignals()}
-        {view==="journal"&&renderJournal()}
+        {view==="marketintel"&&renderPositioning()}
+        {view==="tradelab"&&renderTradeLab()}
       </main>
       <footer style={{padding:"14px 24px",borderTop:`1px solid ${T.border}`,textAlign:"center",fontSize:10,color:T.textD,flexShrink:0}}>CFTC COT · Myfxbook · DailyFX · InvestingLive (ForexLive) · Not financial advice.</footer>
       <ChatAssistant selectedInstrument={sel} intelligenceData={intelData} />
