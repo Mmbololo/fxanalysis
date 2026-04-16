@@ -1,5 +1,5 @@
 "use client";
-import { useState, useMemo } from "react";
+import React, { useState, useMemo } from "react";
 import {
   UserPlus, Pencil, Trash2, X, Check, Shield, CreditCard,
   Plus, Search, ChevronDown, ChevronUp, Users, Package,
@@ -307,8 +307,8 @@ export default function AdminManager({ users: initUsers, plans: initPlans }) {
                       const st = subStatus(user);
                       const isExpanded = expandedUser === user.id;
                       return (
-                        <>
-                          <tr key={user.id} style={{ borderBottom: "1px solid var(--border)", background: isExpanded ? "var(--bg3)" : "transparent", transition: "background 0.15s" }}>
+                        <React.Fragment key={user.id}>
+                          <tr style={{ borderBottom: "1px solid var(--border)", background: isExpanded ? "var(--bg3)" : "transparent", transition: "background 0.15s" }}>
                             {/* User */}
                             <td style={{ padding: "12px 16px" }}>
                               <div style={{ fontWeight: 600, color: "var(--text)" }}>{user.email}</div>
@@ -387,7 +387,7 @@ export default function AdminManager({ users: initUsers, plans: initPlans }) {
                               </td>
                             </tr>
                           )}
-                        </>
+                        </React.Fragment>
                       );
                     })}
                   </tbody>

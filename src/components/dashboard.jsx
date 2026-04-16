@@ -384,13 +384,13 @@ const MetricCard = ({ label, value, sub, subColor, icon: Icon }) => (
   </div>
 );
 
-const VIEWS = ["overview", "intelligence", "charts", "cot", "sentiment", "orderflow", "strategy", "signals", "journal"];
+const VIEWS = ["overview", "intelligence", "cot", "sentiment", "orderflow", "strategy", "signals", "journal"];
 const VIEW_LABELS = {
-  overview: "Overview", intelligence: "Trade Intel", charts: "Intelligent Chart", cot: "COT Data", sentiment: "Sentiment", orderflow: "Order Flow",
+  overview: "Overview", intelligence: "Chart Terminal", cot: "COT Data", sentiment: "Sentiment", orderflow: "Order Flow",
   strategy: "Master Strategy", signals: "Signals", journal: "Trade Journal"
 };
 const VIEW_ICONS = {
-  overview: Activity, intelligence: Layers, charts: Crosshair, cot: BarChart3, sentiment: Brain, orderflow: Radio,
+  overview: Activity, intelligence: Crosshair, cot: BarChart3, sentiment: Brain, orderflow: Radio,
   strategy: Target, signals: Zap, journal: BookOpen
 };
 
@@ -401,7 +401,7 @@ export default function TradingDashboard() {
       set: async (k, v) => localStorage.setItem(k, v)
     };
   }
-  const [view, setView] = useState("charts");
+  const [view, setView] = useState("intelligence");
   const [sel, setSel] = useState("XAUUSD");
   const [intelData, setIntelData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -446,15 +446,15 @@ export default function TradingDashboard() {
     return () => clearInterval(id);
   }, [fetchPrices]);
 
-  // Fetch intelligence data lazily when charts view is active
+  // Fetch intelligence data lazily (used by AI tools + overview)
   useEffect(() => {
-    if (view === "charts" && !intelData) {
+    if (!intelData) {
       fetch("/api/intelligence")
         .then(r => r.json())
         .then(data => setIntelData(data))
         .catch(() => {});
     }
-  }, [view, intelData]);
+  }, [intelData]);
 
 
   useEffect(() => {
@@ -734,6 +734,60 @@ Return ONLY valid JSON (no markdown):
   </>);
 
   const renderCOT = () => (<>
+
+    {/* ── COT Education Banner ── */}
+    <div style={{ background: T.bg2, borderRadius: 14, padding: "18px 22px", border: `1px solid ${T.border}`, marginBottom: 20 }}>
+      <div style={{ fontSize: 14, fontWeight: 800, color: T.text, marginBottom: 10, display: "flex", alignItems: "center", gap: 8 }}>
+        <Database size={16} style={{ color: T.purple }} /> What is the COT Report?
+      </div>
+      <div style={{ fontSize: 12, color: T.textM, lineHeight: 1.8, marginBottom: 14 }}>
+        The <strong style={{ color: T.text }}>Commitments of Traders (COT)</strong> report is published every Friday by the <strong style={{ color: T.text }}>U.S. Commodity Futures Trading Commission (CFTC)</strong>. It shows how the three major trader groups are positioned in futures markets as of the prior Tuesday. This is institutional-grade positioning data — the same information used by hedge funds and proprietary trading desks worldwide.
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 14 }}>
+        {[
+          { title: "Non-Commercial (Speculators)", color: T.purple, icon: "📈",
+            who: "Hedge funds, CTAs, prop traders, large retail operators", motive: "Pure profit — they have no underlying exposure to hedge", signal: "When net-long > 80% of historical range = crowded trade. Price often reverses against them. COT divergence (specs buying but price falling) = bearish warning.", bgColor: `${T.purple}08` },
+          { title: "Commercial (Hedgers)", color: T.cyan, icon: "🏭",
+            who: "Producers, exporters, importers, banks — entities with real exposure", motive: "Risk management — they take the opposite side of their real-world business risk", signal: "Commercials are long when they fear price will rise, short when they fear a fall. They're usually correct over the long-term. Extreme commercial net-long = bullish fundamentals.", bgColor: `${T.cyan}08` },
+          { title: "Non-Reportable (Small Specs)", color: T.amber, icon: "👤",
+            who: "Retail traders and small investors below the reporting threshold", motive: "Speculation — similar to non-commercials but smaller scale", signal: "Acts like a dumb-money indicator. When small specs are extremely one-sided, it often confirms a crowded trade that's due for reversal. Less reliable alone but useful for confirmation.", bgColor: `${T.amber}08` },
+        ].map(g => (
+          <div key={g.title} style={{ background: g.bgColor, borderRadius: 10, padding: "12px 14px", border: `1px solid ${g.color}25` }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: g.color, marginBottom: 6 }}>{g.icon} {g.title}</div>
+            <div style={{ fontSize: 11, color: T.textD, marginBottom: 4 }}><strong style={{ color: T.textM }}>Who:</strong> {g.who}</div>
+            <div style={{ fontSize: 11, color: T.textD, marginBottom: 4 }}><strong style={{ color: T.textM }}>Motive:</strong> {g.motive}</div>
+            <div style={{ fontSize: 11, color: T.textM, lineHeight: 1.6, borderTop: `1px solid ${g.color}20`, paddingTop: 6, marginTop: 4 }}><strong style={{ color: g.color }}>Signal:</strong> {g.signal}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* How to read the chart */}
+      <div style={{ background: T.bg, borderRadius: 10, padding: "12px 16px", border: `1px solid ${T.border}` }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: T.text, marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
+          <Activity size={13} style={{ color: T.cyan }} /> Key COT Concepts to Master
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 10 }}>
+          {[
+            { term: "COT Divergence", color: T.red, explain: "Price makes a new high but speculator net-long positions are falling. Classic distribution pattern — smart money is quietly selling while retail chases the move. One of the most reliable leading indicators of a reversal." },
+            { term: "Net Position Extreme", color: T.amber, explain: "When speculators are positioned at multi-year extremes (top or bottom 10% of their historical range), the market is 'crowded'. Reversals from these extremes can be violent as everyone rushes for the exit simultaneously." },
+            { term: "Commercial Accumulation", color: T.cyan, explain: "When commercials are building unusual net-long positions (hedgers buying protection against price rises), it often signals they expect prices to move higher. Follow commercial hedger intent, not their direction." },
+            { term: "Spec Momentum", color: T.green, explain: "When speculators are consistently adding to net-long/short positions week over week, it confirms a trending market. The trend is likely to continue until positioning reaches an extreme or COT divergence appears." },
+          ].map(c => (
+            <div key={c.term} style={{ padding: "8px 10px", background: T.bg2, borderRadius: 7, border: `1px solid ${T.border}` }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: c.color, marginBottom: 3 }}>{c.term}</div>
+              <div style={{ fontSize: 11, color: T.textD, lineHeight: 1.6 }}>{c.explain}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ marginTop: 10, fontSize: 11, color: T.textD, display: "flex", alignItems: "center", gap: 8 }}>
+        <div style={{ width: 6, height: 6, borderRadius: 3, background: T.amber }} />
+        COT data is released every Friday at 3:30 PM ET covering positions as of the prior Tuesday. There is a ~3 day lag built into the data.
+        <span style={{ marginLeft: "auto", color: T.purple, fontWeight: 600 }}>Latest: {inst?.cot?.date || "N/A"}</span>
+      </div>
+    </div>
+
     <div style={s.g4}>
       <MetricCard label="Price" value={priceStr(inst)} sub={`${inst.change>0?"+":""}${inst.change}% weekly`} subColor={inst.change>0?T.green:T.red} icon={TrendingUp}/>
       <MetricCard label="Spec net" value={inst.cot.netSpec?fmt(inst.cot.netSpec):(inst.cot.crossBias||"N/A")} sub={inst.cot.prevNet?`prev: ${fmt(inst.cot.prevNet)}`:""} icon={BarChart3}/>
@@ -1387,7 +1441,20 @@ Return ONLY valid JSON (no markdown):
             <div style={{width:6,height:6,borderRadius:3,background:T.green,animation:"pulse 1.5s infinite"}}/>
             <span style={{fontSize:10,fontWeight:700,color:T.green,letterSpacing:0.8}}>LIVE</span>
           </div>}
-          <div style={{fontSize:10,color:T.textD}}>CFTC: Apr 7{lastRef&&` · AI: ${new Date(lastRef).toLocaleDateString()}`}</div>
+          <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+            <div style={{display:"flex",alignItems:"center",gap:4,fontSize:10,color:T.green}}>
+              <div style={{width:5,height:5,borderRadius:3,background:T.green,animation:"pulse 1.5s infinite"}}/>
+              Prices: Real-time (Yahoo Finance)
+            </div>
+            <span style={{color:T.border}}>|</span>
+            <div style={{fontSize:10,color:T.amber,display:"flex",alignItems:"center",gap:4}}>
+              <div style={{width:5,height:5,borderRadius:3,background:T.amber}}/>
+              COT: {inst?.cot?.date||"Apr 7, 2026"} (weekly CFTC)
+            </div>
+            <span style={{color:T.border}}>|</span>
+            <div style={{fontSize:10,color:T.textD}}>Sentiment: Myfxbook live</div>
+            {lastRef&&<span style={{fontSize:10,color:T.textD}}>· AI: {new Date(lastRef).toLocaleDateString()}</span>}
+          </div>
           <Link href="/profile" style={{display:"flex",alignItems:"center",gap:5,padding:"5px 10px",borderRadius:7,fontSize:12,fontWeight:600,border:`1px solid ${T.border}`,color:T.textM,textDecoration:"none"}}><User size={13}/>Profile</Link>
           <button onClick={()=>signOut({callbackUrl:"/login"})} style={{display:"flex",alignItems:"center",gap:5,padding:"5px 10px",borderRadius:7,fontSize:12,fontWeight:600,border:`1px solid ${T.border}`,color:T.textM,background:"transparent",cursor:"pointer"}}><LogOut size={13}/>Logout</button>
           <style>{`@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}`}</style>
@@ -1398,7 +1465,6 @@ Return ONLY valid JSON (no markdown):
       <main style={view==="intelligence"?{padding:0,flex:1,display:"flex",flexDirection:"column",minHeight:0,overflow:"hidden"}:{...s.mn,flex:1,overflowY:"auto"}}>
         {view==="overview"&&renderOverview()}
         {view==="intelligence"&&<TradingIntelligence />}
-        {view==="charts"&&renderCharts()}
         {view==="cot"&&renderCOT()}
         {view==="sentiment"&&renderSentiment()}
         {view==="orderflow"&&renderOrderFlow()}

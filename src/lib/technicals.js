@@ -177,16 +177,35 @@ export function generateSignal(instrument, current, trend, rsiVal, macdData, srL
     entry = current;
     sl = Math.max(s1, current - atrVal * 1.5);
     const risk = entry - sl;
-    tp1 = entry + risk * 1.5;
-    tp2 = entry + risk * 2.5;
-    tp3 = r1;
+    // Collect candidates: ATR multiples + nearest resistance
+    // Sort ascending so tp1 is the closest target above entry
+    const candidates = [
+      entry + risk * 1.5,
+      entry + risk * 2.5,
+      entry + risk * 4.0,
+    ];
+    // Replace 4R with r1 only if r1 is a valid 3rd target (beyond 2R and within 6R)
+    if (r1 > entry + risk * 2 && r1 < entry + risk * 6) {
+      candidates[2] = r1;
+    }
+    candidates.sort((a, b) => a - b); // ascending: tp1 closest, tp3 furthest
+    [tp1, tp2, tp3] = candidates;
   } else if (isBear) {
     entry = current;
     sl = Math.min(r1, current + atrVal * 1.5);
     const risk = sl - entry;
-    tp1 = entry - risk * 1.5;
-    tp2 = entry - risk * 2.5;
-    tp3 = s1;
+    // Sort descending so tp1 is the closest target below entry
+    const candidates = [
+      entry - risk * 1.5,
+      entry - risk * 2.5,
+      entry - risk * 4.0,
+    ];
+    // Replace 4R with s1 only if s1 is a valid 3rd target (beyond 2R and within 6R)
+    if (s1 < entry - risk * 2 && s1 > entry - risk * 6) {
+      candidates[2] = s1;
+    }
+    candidates.sort((a, b) => b - a); // descending: tp1 closest, tp3 furthest
+    [tp1, tp2, tp3] = candidates;
   } else {
     return null;
   }

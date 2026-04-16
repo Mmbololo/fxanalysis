@@ -90,7 +90,15 @@ function getAffectedInstruments(title) {
   return [...new Set(affected)].slice(0, 4);
 }
 
-export async function GET() {
+export async function GET(req) {
+  const { searchParams } = new URL(req.url);
+  const interval = searchParams.get("interval") || "1d";
+  const range = searchParams.get("range") || "6mo";
+  const cacheKey = `${interval}_${range}`;
+
+  if (!caches[cacheKey]) caches[cacheKey] = { data: null, ts: 0 };
+  const cache = caches[cacheKey];
+
   // Return cached response if fresh
   if (cache.data && Date.now() - cache.ts < CACHE_TTL) {
     return NextResponse.json(cache.data, {
@@ -99,10 +107,10 @@ export async function GET() {
   }
 
   try {
-    // Fetch all OHLC data in parallel (6 months = ~130 daily bars, enough for all indicators)
+    // Fetch all OHLC data in parallel
     const ohlcData = await Promise.all(
       Object.entries(INSTRUMENTS).map(async ([key, info]) => {
-        const data = await fetchOHLC(info.symbol);
+        const data = await fetchOHLC(info.symbol, interval, range);
         return [key, data];
       })
     );
@@ -204,7 +212,7 @@ export async function GET() {
       return (order[a.impact] - order[b.impact]) || (new Date(b.pubDate) - new Date(a.pubDate));
     });
 
-    const payload = { instruments: results, news: allNews.slice(0, 20), ts: Date.now() };
+    const payload = { instruments: results, news: allNews.slice(0, 20), ts: Date.now(), interval, range };
     cache.data = payload;
     cache.ts = Date.now();
     return NextResponse.json(payload, {
