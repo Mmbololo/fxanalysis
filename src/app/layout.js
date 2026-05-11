@@ -1,9 +1,10 @@
-import { Maven_Pro } from "next/font/google";
+import { Geist_Mono } from "next/font/google";
 import "./globals.css";
+import Providers from "./providers";
 
-const mavenPro = Maven_Pro({
+const geistMono = Geist_Mono({
   subsets: ["latin"],
-  variable: "--font-maven-pro",
+  variable: "--font-geist-mono",
 });
 
 export const metadata = {
@@ -14,8 +15,8 @@ export const metadata = {
 export default function RootLayout({ children }) {
   return (
     <html lang="en">
-      <body className={mavenPro.variable} suppressHydrationWarning>
-        {children}
+      <body className={geistMono.variable} suppressHydrationWarning>
+        <Providers>{children}</Providers>
       </body>
     </html>
   );

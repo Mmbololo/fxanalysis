@@ -19,18 +19,18 @@ export async function PATCH(req, { params }) {
 
   if (body.status) data.status = body.status;
   if (body.exitPrice !== undefined) data.exitPrice = parseFloat(body.exitPrice);
+  if (body.result !== undefined) data.result = body.result;
   if (body.notes !== undefined) data.notes = body.notes;
 
   if (body.status === "CLOSED" || body.status === "CANCELLED") {
     data.closedAt = new Date();
-    if (body.exitPrice !== undefined) data.exitPrice = parseFloat(body.exitPrice);
   }
 
   const signal = await prisma.signal.update({ where: { id }, data });
   return NextResponse.json({ signal });
 }
 
-export async function DELETE(req, { params }) {
+export async function DELETE(_req, { params }) {
   const session = await getServerSession(authOptions);
   if (!session?.user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 

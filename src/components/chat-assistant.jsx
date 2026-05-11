@@ -25,6 +25,49 @@ const T = {
   textD: "#64748b",
 };
 
+// ── Lightweight markdown renderer ─────────────────────────────────────────────
+function Bold({ text }) {
+  const parts = text.split(/\*\*(.+?)\*\*/g);
+  if (parts.length === 1) return text;
+  return parts.map((p, i) =>
+    i % 2 === 1
+      ? <strong key={i} style={{ color: "#e2e8f0", fontWeight: 700 }}>{p}</strong>
+      : p
+  );
+}
+
+function RenderMsg({ content }) {
+  const lines = content.split("\n");
+  const out = [];
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    // Table row — skip pure separator lines
+    if (line.startsWith("|")) {
+      if (/^\|[\s\-:|]+\|$/.test(line)) { i++; continue; }
+      const cells = line.replace(/^\||\|$/g, "").split("|").map(c => c.trim());
+      out.push(
+        <div key={i} style={{ display: "flex", gap: 4, marginBottom: 2 }}>
+          {cells.map((c, j) => (
+            <span key={j} style={{ flex: 1, padding: "3px 8px", background: "#0a0e17", borderRadius: 4, fontSize: 12, color: "#94a3b8" }}>
+              <Bold text={c} />
+            </span>
+          ))}
+        </div>
+      );
+      i++; continue;
+    }
+    // Empty line → spacing
+    if (!line.trim()) {
+      out.push(<div key={i} style={{ height: 6 }} />);
+      i++; continue;
+    }
+    out.push(<div key={i} style={{ lineHeight: 1.55 }}><Bold text={line} /></div>);
+    i++;
+  }
+  return <>{out}</>;
+}
+
 export default function ChatAssistant({ selectedInstrument, intelligenceData }) {
   const [isOpen, setIsOpen] = useState(false);
   const [isMinimized, setIsMinimized] = useState(false);
@@ -55,7 +98,7 @@ export default function ChatAssistant({ selectedInstrument, intelligenceData }) 
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           messages: newMessages,
-          context: { selectedInstrument },
+          context: { selectedInstrument, intelligenceData },
         })
       });
 
@@ -186,7 +229,7 @@ export default function ChatAssistant({ selectedInstrument, intelligenceData }) 
                   wordBreak: "break-word",
                   overflowWrap: "anywhere"
                 }}>
-                  {m.content}
+                  <RenderMsg content={m.content} />
                 </div>
               </div>
             ))}

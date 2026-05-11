@@ -36,7 +36,7 @@ export default async function ProfilePage() {
   const winRate = closedSignals.length > 0 ? ((wins / closedSignals.length) * 100).toFixed(0) : null;
 
   const s = {
-    root: { minHeight: "100vh", background: "var(--bg)", color: "var(--text)", fontFamily: "var(--font-maven-pro), sans-serif" },
+    root: { minHeight: "100vh", background: "var(--bg)", color: "var(--text)", fontFamily: "var(--font-geist-mono), monospace" },
     header: { display: "flex", alignItems: "center", gap: 12, padding: "16px clamp(16px, 4vw, 32px)", borderBottom: "1px solid var(--border)", background: "var(--bg2)", flexWrap: "wrap" },
     main: { width: "100%", padding: "32px clamp(16px, 4vw, 24px)", boxSizing: "border-box" },
     card: { background: "var(--bg2)", borderRadius: 12, padding: 24, border: "1px solid var(--border)", marginBottom: 20, overflowX: "auto" },

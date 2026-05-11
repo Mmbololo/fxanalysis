@@ -3,8 +3,10 @@ import React, { useEffect, useRef, useState } from "react";
 import { createChart, ColorType, CandlestickSeries, HistogramSeries, LineSeries, createSeriesMarkers } from "lightweight-charts";
 import { 
   Zap, AlertTriangle, Target, Shield, 
-  Maximize2, Minimize2, Settings, Download, Camera
+  Maximize2, Minimize2, Settings, Download, Camera,
+  Monitor
 } from "lucide-react";
+import { TVChart } from "./TradingViewWidgets";
 
 const T = {
   purple: "#8b5cf6",
@@ -27,6 +29,7 @@ export default function AdvancedChart({ instrumentKey, data, news }) {
   const [timeframe, setTimeframe] = useState("1d");
   const [isExpanded, setIsExpanded] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
+  const [chartMode, setChartMode] = useState("system"); // 'system' | 'pro'
 
   useEffect(() => {
     const checkMobile = () => setIsMobile(window.innerWidth < 768);
@@ -43,7 +46,7 @@ export default function AdvancedChart({ instrumentKey, data, news }) {
         background: { type: ColorType.Solid, color: T.bg },
         textColor: T.textM,
         fontSize: 11,
-        fontFamily: "'Maven Pro', sans-serif",
+        fontFamily: "var(--font-geist-mono), monospace",
       },
       grid: {
         vertLines: { color: "rgba(30, 45, 69, 0.4)" },
@@ -220,6 +223,19 @@ export default function AdvancedChart({ instrumentKey, data, news }) {
           </div>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
+          <button 
+            onClick={() => setChartMode(chartMode === "system" ? "pro" : "system")}
+            style={{ 
+              padding: "4px 10px", borderRadius: 6, fontSize: 11, fontWeight: 700,
+              background: chartMode === "pro" ? T.purple : T.bg, 
+              color: chartMode === "pro" ? "#fff" : T.textM,
+              border: `1px solid ${chartMode === "pro" ? T.purple : T.border}`, 
+              cursor: "pointer", display: "flex", alignItems: "center", gap: 5
+            }}
+          >
+            <Monitor size={14} /> {chartMode === "pro" ? "Exit Pro View" : "Pro View"}
+          </button>
+          <div style={{ width: 1, height: 24, background: T.border, margin: "0 4px" }} />
           <button style={{ p: 6, color: T.textM, background: "none", border: "none", cursor: "pointer" }} title="Chart Settings"><Settings size={16} /></button>
           <button style={{ p: 6, color: T.textM, background: "none", border: "none", cursor: "pointer" }} title="Snapshot"><Camera size={16} /></button>
           <button 
@@ -232,10 +248,16 @@ export default function AdvancedChart({ instrumentKey, data, news }) {
       </div>
 
       {/* Main Chart Area */}
-      <div 
-        ref={chartContainerRef} 
-        style={{ width: "100%", height: isExpanded ? 700 : isMobile ? 320 : 450, position: "relative" }} 
-      />
+      {chartMode === "system" ? (
+        <div 
+          ref={chartContainerRef} 
+          style={{ width: "100%", height: isExpanded ? 700 : isMobile ? 320 : 450, position: "relative" }} 
+        />
+      ) : (
+        <div style={{ width: "100%", height: isExpanded ? 700 : isMobile ? 400 : 550 }}>
+          <TVChart symbol={instrumentKey} height="100%" />
+        </div>
+      )}
 
       {/* Dynamic Overlays (Floating Legends) */}
       <div style={{ 

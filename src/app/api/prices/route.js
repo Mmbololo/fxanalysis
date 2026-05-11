@@ -1,16 +1,16 @@
 import { NextResponse } from "next/server";
 
 const SYMBOLS = {
-  XAUUSD: "GC=F",
+  XAUUSD: "XAUUSD=X", // Spot Gold
   GBPUSD: "GBPUSD=X",
   GBPJPY: "GBPJPY=X",
   BTCUSD: "BTC-USD",
   EURUSD: "EURUSD=X",
 };
 
-// Server-side cache — 15 sec TTL for near-real-time prices
+// Server-side cache — 3 sec TTL for near-real-time prices
 const priceCache = { data: null, ts: 0 };
-const PRICE_TTL = 15_000;
+const PRICE_TTL = 3_000;
 
 export async function GET() {
   if (priceCache.data && Date.now() - priceCache.ts < PRICE_TTL) {

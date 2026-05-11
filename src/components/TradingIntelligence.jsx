@@ -1,10 +1,9 @@
 "use client";
 import { useState, useEffect, useCallback, useRef } from "react";
-import { createChart, ColorType, CandlestickSeries, HistogramSeries, LineSeries, createSeriesMarkers } from "lightweight-charts";
 import {
   RefreshCw, TrendingUp, TrendingDown, Minus, Zap, AlertTriangle,
   Target, BarChart2, Newspaper, Activity, ArrowUpRight, ArrowDownRight, Clock,
-  Layers, Shield, TrendingUp as TrendUp
+  Layers
 } from "lucide-react";
 
 // ── Palette ──────────────────────────────────────────────────────────
@@ -48,147 +47,215 @@ const fmtPrice = (key, v) => {
 };
 const fmtPct = (n) => n == null ? "—" : (n >= 0 ? "+" : "") + n.toFixed(2) + "%";
 
-// ── Chart helpers ─────────────────────────────────────────────────────
-function calcSMA(series, period) {
-  const result = [];
-  for (let i = period - 1; i < series.length; i++) {
-    const sum = series.slice(i - period + 1, i + 1).reduce((a, d) => a + d.close, 0);
-    result.push({ time: series[i].time, value: parseFloat((sum / period).toFixed(6)) });
-  }
-  return result;
-}
+// ── TradingView symbol + interval maps ───────────────────────────────
+const TV_SYMBOLS = {
+  XAUUSD: "OANDA:XAUUSD",
+  GBPUSD: "OANDA:GBPUSD",
+  GBPJPY: "OANDA:GBPJPY",
+  BTCUSD: "BITSTAMP:BTCUSD",
+  EURUSD: "OANDA:EURUSD",
+};
 
-function calcWVPPP(series) {
-  let wSum = 0, vSum = 0;
-  for (const b of series) {
-    const pivot = (b.high + b.low + b.close) / 3;
-    const vol = b.volume || 1;
-    wSum += pivot * vol;
-    vSum += vol;
-  }
-  return vSum > 0 ? wSum / vSum : null;
-}
+const TV_INTERVALS = {
+  "1M": "1", "15M": "15", "30M": "30",
+  "1H": "60", "4H": "240", "1D": "D", "1W": "W",
+};
 
-// RSI array from closes
-function calcRSIArray(closes, period = 14) {
-  if (closes.length < period + 1) return [];
-  const result = [];
-  let avgGain = 0, avgLoss = 0;
-  for (let i = 1; i <= period; i++) {
-    const d = closes[i] - closes[i - 1];
-    if (d > 0) avgGain += d; else avgLoss -= d;
-  }
-  avgGain /= period; avgLoss /= period;
-  result.push({ index: period, value: avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss) });
-  for (let i = period + 1; i < closes.length; i++) {
-    const d = closes[i] - closes[i - 1];
-    avgGain = (avgGain * (period - 1) + Math.max(0, d)) / period;
-    avgLoss = (avgLoss * (period - 1) + Math.max(0, -d)) / period;
-    result.push({ index: i, value: avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss) });
-  }
-  return result;
-}
+// ── TradingView Advanced Chart ────────────────────────────────────────
+function TradingViewChart({ instrumentKey, tfLabel }) {
+  const containerRef = useRef(null);
 
-// Detect RSI divergence — returns markers array for lightweight-charts
-function detectRSIDivergence(series) {
-  if (series.length < 40) return [];
-  const closes = series.map(d => d.close);
-  const rsiArr = calcRSIArray(closes);
-  if (!rsiArr.length) return [];
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    el.innerHTML = "";
 
-  // Build index→rsi map
-  const rsiMap = {};
-  for (const r of rsiArr) rsiMap[r.index] = r.value;
+    const widgetId = `tv_${instrumentKey}_${Date.now()}`;
+    const inner = document.createElement("div");
+    inner.id = widgetId;
+    inner.style.cssText = "width:100%;height:100%;";
+    el.appendChild(inner);
 
-  const LB = 5; // lookback bars each side to qualify as a swing
-  const swingHighs = [], swingLows = [];
+    const init = () => {
+      if (!window.TradingView || !document.getElementById(widgetId)) return;
+      new window.TradingView.widget({
+        container_id: widgetId,
+        autosize: true,
+        symbol: TV_SYMBOLS[instrumentKey] || "OANDA:XAUUSD",
+        interval: TV_INTERVALS[tfLabel] || "D",
+        timezone: "Etc/UTC",
+        theme: "dark",
+        style: "1",
+        locale: "en",
+        backgroundColor: "#0a0e17",
+        gridColor: "rgba(30,45,69,0.5)",
+        toolbar_bg: "#111827",
+        withdateranges: true,
+        hide_side_toolbar: false,
+        allow_symbol_change: false,
+        save_image: true,
+        studies: [
+          "RSI@tv-basicstudies",
+          "BB@tv-basicstudies",
+        ],
+        disabled_features: [
+          "header_symbol_search",
+          "header_compare",
+          "go_to_date",
+        ],
+        enabled_features: [
+          "study_templates",
+          "side_toolbar_in_fullscreen_mode",
+          "hide_left_toolbar_by_default",
+        ],
+        overrides: {
+          "mainSeriesProperties.candleStyle.upColor": "#10b981",
+          "mainSeriesProperties.candleStyle.downColor": "#ef4444",
+          "mainSeriesProperties.candleStyle.borderUpColor": "#10b981",
+          "mainSeriesProperties.candleStyle.borderDownColor": "#ef4444",
+          "mainSeriesProperties.candleStyle.wickUpColor": "#10b981",
+          "mainSeriesProperties.candleStyle.wickDownColor": "#ef4444",
+          "paneProperties.background": "#0a0e17",
+          "paneProperties.vertGridProperties.color": "rgba(30,45,69,0.4)",
+          "paneProperties.horzGridProperties.color": "rgba(30,45,69,0.4)",
+          "scalesProperties.textColor": "#64748b",
+          "scalesProperties.lineColor": "#1e2d45",
+        },
+      });
+    };
 
-  for (let i = LB; i < series.length - LB; i++) {
-    if (rsiMap[i] == null) continue;
-    const hi = series[i].high, lo = series[i].low;
-    let isH = true, isL = true;
-    for (let j = i - LB; j <= i + LB; j++) {
-      if (j === i) continue;
-      if (series[j].high >= hi) isH = false;
-      if (series[j].low  <= lo) isL = false;
+    if (window.TradingView) {
+      init();
+    } else {
+      const existing = document.getElementById("tv-script");
+      if (!existing) {
+        const s = document.createElement("script");
+        s.id = "tv-script";
+        s.src = "https://s3.tradingview.com/tv.js";
+        s.async = true;
+        s.onload = init;
+        document.head.appendChild(s);
+      } else {
+        // script tag exists but TradingView not ready yet — poll briefly
+        let tries = 0;
+        const poll = setInterval(() => {
+          if (window.TradingView || ++tries > 20) {
+            clearInterval(poll);
+            init();
+          }
+        }, 150);
+      }
     }
-    if (isH) swingHighs.push({ i, price: hi, rsi: rsiMap[i], time: series[i].time });
-    if (isL) swingLows.push({ i, price: lo, rsi: rsiMap[i], time: series[i].time });
-  }
 
-  const markers = [];
+    return () => { if (el) el.innerHTML = ""; };
+  }, [instrumentKey, tfLabel]);
 
-  // Bearish divergence: price higher-high + RSI lower-high
-  for (let k = 1; k < swingHighs.length; k++) {
-    const prev = swingHighs[k - 1], curr = swingHighs[k];
-    const gap = curr.i - prev.i;
-    if (gap < 8 || gap > 80) continue;
-    if (curr.price > prev.price * 1.001 && curr.rsi < prev.rsi - 1) {
-      markers.push({ time: curr.time, position: "aboveBar", color: "#ef4444", shape: "arrowDown", text: "RSI Bear Div" });
-    }
-  }
-
-  // Bullish divergence: price lower-low + RSI higher-low
-  for (let k = 1; k < swingLows.length; k++) {
-    const prev = swingLows[k - 1], curr = swingLows[k];
-    const gap = curr.i - prev.i;
-    if (gap < 8 || gap > 80) continue;
-    if (curr.price < prev.price * 0.999 && curr.rsi > prev.rsi + 1) {
-      markers.push({ time: curr.time, position: "belowBar", color: "#10b981", shape: "arrowUp", text: "RSI Bull Div" });
-    }
-  }
-
-  return markers;
+  return <div ref={containerRef} style={{ width: "100%", height: "100%" }} />;
 }
 
-// ── Scoring engine ───────────────────────────────────────────────────
+// ── Unified scoring engine (TA + SMC blended) ────────────────────────
 function scoreInstrument(d) {
   if (!d) return { score: 0, direction: "NEUTRAL", factors: [], cautions: [] };
-  const { trend, rsi, macd, sma, structure, bb, current } = d;
-  let score = 50;
+  const { trend, rsi, macd, sma, structure, bb, current, smc } = d;
+
+  let taScore = 50;
   const factors = [];
   const cautions = [];
 
-  if (trend === "BULLISH") { score += 12; factors.push({ label: "Trend", text: "Bullish — price above key MAs", delta: +12, color: C.green }); }
-  else if (trend === "BEARISH") { score -= 12; factors.push({ label: "Trend", text: "Bearish — price below key MAs", delta: -12, color: C.red }); }
+  // ── Classical TA factors ──────────────────────────────────────────
+  if (trend === "BULLISH") { taScore += 12; factors.push({ label: "Trend", text: "Bullish — price above key MAs", delta: +12, color: C.green }); }
+  else if (trend === "BEARISH") { taScore -= 12; factors.push({ label: "Trend", text: "Bearish — price below key MAs", delta: -12, color: C.red }); }
   else { factors.push({ label: "Trend", text: "Ranging — no clear direction", delta: 0, color: C.textM }); }
 
   if (rsi != null) {
-    if (rsi > 70) { score -= 10; factors.push({ label: "RSI", text: `${rsi.toFixed(1)} — Overbought`, delta: -10, color: C.red }); cautions.push("RSI overbought — potential pullback"); }
-    else if (rsi < 30) { score += 10; factors.push({ label: "RSI", text: `${rsi.toFixed(1)} — Oversold`, delta: +10, color: C.green }); cautions.push("RSI oversold — watch for reversal"); }
-    else if (rsi > 55) { score += 6; factors.push({ label: "RSI", text: `${rsi.toFixed(1)} — Mild bullish`, delta: +6, color: C.green }); }
-    else if (rsi < 45) { score -= 6; factors.push({ label: "RSI", text: `${rsi.toFixed(1)} — Mild bearish`, delta: -6, color: C.red }); }
+    if (rsi > 70) { taScore -= 10; factors.push({ label: "RSI", text: `${rsi.toFixed(1)} — Overbought`, delta: -10, color: C.red }); cautions.push("RSI overbought — potential pullback"); }
+    else if (rsi < 30) { taScore += 10; factors.push({ label: "RSI", text: `${rsi.toFixed(1)} — Oversold`, delta: +10, color: C.green }); cautions.push("RSI oversold — watch for reversal"); }
+    else if (rsi > 55) { taScore += 6; factors.push({ label: "RSI", text: `${rsi.toFixed(1)} — Mild bullish`, delta: +6, color: C.green }); }
+    else if (rsi < 45) { taScore -= 6; factors.push({ label: "RSI", text: `${rsi.toFixed(1)} — Mild bearish`, delta: -6, color: C.red }); }
     else { factors.push({ label: "RSI", text: `${rsi.toFixed(1)} — Neutral`, delta: 0, color: C.textM }); }
   }
 
   if (macd) {
-    if (macd.cross === "bullish") { score += 10; factors.push({ label: "MACD", text: "Bullish crossover confirmed", delta: +10, color: C.green }); }
-    else if (macd.cross === "bearish") { score -= 10; factors.push({ label: "MACD", text: "Bearish crossover confirmed", delta: -10, color: C.red }); }
-    else if (macd.histogram > 0) { score += 5; factors.push({ label: "MACD", text: "Positive histogram", delta: +5, color: C.green }); }
-    else if (macd.histogram < 0) { score -= 5; factors.push({ label: "MACD", text: "Negative histogram", delta: -5, color: C.red }); }
+    if (macd.cross === "bullish") { taScore += 10; factors.push({ label: "MACD", text: "Bullish crossover confirmed", delta: +10, color: C.green }); }
+    else if (macd.cross === "bearish") { taScore -= 10; factors.push({ label: "MACD", text: "Bearish crossover confirmed", delta: -10, color: C.red }); }
+    else if (macd.histogram > 0) { taScore += 5; factors.push({ label: "MACD", text: "Positive histogram", delta: +5, color: C.green }); }
+    else if (macd.histogram < 0) { taScore -= 5; factors.push({ label: "MACD", text: "Negative histogram", delta: -5, color: C.red }); }
     else { factors.push({ label: "MACD", text: "Neutral", delta: 0, color: C.textM }); }
   }
 
-  if (structure === "BREAKOUT") { score += 12; factors.push({ label: "Structure", text: "Breakout above resistance", delta: +12, color: C.green }); }
-  else if (structure === "BREAKDOWN") { score -= 12; factors.push({ label: "Structure", text: "Breakdown below support", delta: -12, color: C.red }); }
-  else if (structure === "TRENDING") { score += 6; factors.push({ label: "Structure", text: "Trending — follow momentum", delta: +6, color: C.green }); }
+  if (structure === "BREAKOUT") { taScore += 12; factors.push({ label: "Structure", text: "Breakout above resistance", delta: +12, color: C.green }); }
+  else if (structure === "BREAKDOWN") { taScore -= 12; factors.push({ label: "Structure", text: "Breakdown below support", delta: -12, color: C.red }); }
+  else if (structure === "TRENDING") { taScore += 6; factors.push({ label: "Structure", text: "Trending — follow momentum", delta: +6, color: C.green }); }
   else if (structure === "RANGING") { cautions.push("Price ranging — avoid trend entries"); factors.push({ label: "Structure", text: "Consolidation — low conviction", delta: 0, color: C.amber }); }
   else { factors.push({ label: "Structure", text: "Consolidating", delta: 0, color: C.textM }); }
 
   if (bb && current) {
-    if (current > bb.upper) { score -= 8; cautions.push("Price above upper BB — extended"); factors.push({ label: "BB", text: "Above upper band — overextended", delta: -8, color: C.red }); }
-    else if (current < bb.lower) { score += 8; cautions.push("Price below lower BB — possible bounce"); factors.push({ label: "BB", text: "Below lower band — possible bounce", delta: +8, color: C.green }); }
+    if (current > bb.upper) { taScore -= 8; cautions.push("Price above upper BB — extended"); factors.push({ label: "BB", text: "Above upper band — overextended", delta: -8, color: C.red }); }
+    else if (current < bb.lower) { taScore += 8; cautions.push("Price below lower BB — possible bounce"); factors.push({ label: "BB", text: "Below lower band — possible bounce", delta: +8, color: C.green }); }
     else if (bb.upper && bb.lower && bb.middle && ((bb.upper - bb.lower) / bb.middle) < 0.01) { cautions.push("BB squeeze — breakout imminent"); factors.push({ label: "BB", text: "Bands squeezing — expect volatility", delta: 0, color: C.amber }); }
     else { factors.push({ label: "BB", text: "Price within bands — normal range", delta: 0, color: C.textM }); }
   }
 
   if (sma && current) {
     const a200 = current > sma.sma200, a50 = current > sma.sma50, a20 = current > sma.sma20;
-    if (a200 && a50 && a20) { score += 8; factors.push({ label: "MA Stack", text: "Above SMA20/50/200 — strong bull", delta: +8, color: C.green }); }
-    else if (!a200 && !a50 && !a20) { score -= 8; factors.push({ label: "MA Stack", text: "Below SMA20/50/200 — strong bear", delta: -8, color: C.red }); }
+    if (a200 && a50 && a20) { taScore += 8; factors.push({ label: "MA Stack", text: "Above SMA20/50/200 — strong bull", delta: +8, color: C.green }); }
+    else if (!a200 && !a50 && !a20) { taScore -= 8; factors.push({ label: "MA Stack", text: "Below SMA20/50/200 — strong bear", delta: -8, color: C.red }); }
   }
 
-  score = Math.min(100, Math.max(0, Math.round(score)));
+  taScore = Math.min(100, Math.max(0, taScore));
+
+  // ── SMC factors ───────────────────────────────────────────────────
+  let smcDelta = 0;
+  if (smc) {
+    if (smc.structureTrend === "BULLISH") { smcDelta += 10; factors.push({ label: "SMC Structure", text: "Bullish market structure (HH/HL)", delta: +10, color: C.green }); }
+    else if (smc.structureTrend === "BEARISH") { smcDelta -= 10; factors.push({ label: "SMC Structure", text: "Bearish market structure (LH/LL)", delta: -10, color: C.red }); }
+
+    if (smc.bos) {
+      const d = smc.bos.type === "bullish" ? +8 : -8;
+      smcDelta += d;
+      factors.push({ label: "BOS", text: `${smc.bos.type === "bullish" ? "Bullish" : "Bearish"} Break of Structure`, delta: d, color: d > 0 ? C.green : C.red });
+    }
+
+    if (smc.choch) {
+      const d = smc.choch.type === "bullish" ? +5 : -5;
+      smcDelta += d;
+      factors.push({ label: "CHoCH", text: `${smc.choch.type === "bullish" ? "Bullish" : "Bearish"} Change of Character`, delta: d, color: d > 0 ? C.cyan : C.amber });
+    }
+
+    const inZoneBull = (smc.bullishOBs || []).filter(o => o.inZone).length;
+    const inZoneBear = (smc.bearishOBs || []).filter(o => o.inZone).length;
+    if (inZoneBull > 0) { const d = Math.min(inZoneBull * 6, 12); smcDelta += d; factors.push({ label: "Order Block", text: `${inZoneBull} bullish OB in zone`, delta: d, color: C.green }); }
+    if (inZoneBear > 0) { const d = -Math.min(inZoneBear * 6, 12); smcDelta += d; factors.push({ label: "Order Block", text: `${inZoneBear} bearish OB in zone`, delta: d, color: C.red }); }
+
+    const lastSweep = smc.liquiditySweeps?.slice(-1)[0];
+    if (lastSweep) {
+      const d = lastSweep.type === "bullish" ? +5 : -5;
+      smcDelta += d;
+      factors.push({ label: "Liq. Sweep", text: `${lastSweep.type === "bullish" ? "Bullish" : "Bearish"} liquidity sweep`, delta: d, color: d > 0 ? C.cyan : C.amber });
+    }
+  }
+
+  // ── Blend TA (60%) + SMC (40%) ────────────────────────────────────
+  const hasSmc = !!smc;
+  let score;
+  if (hasSmc) {
+    const smcScore = Math.min(100, Math.max(0, 50 + smcDelta));
+    score = Math.round(taScore * 0.6 + smcScore * 0.4);
+  } else {
+    score = Math.round(taScore);
+  }
+  score = Math.min(100, Math.max(0, score));
+
+  // ── Conflict detection ────────────────────────────────────────────
+  const taDir = taScore >= 60 ? "BULL" : taScore <= 40 ? "BEAR" : "NEUTRAL";
+  const smcDir = hasSmc ? (50 + smcDelta >= 60 ? "BULL" : 50 + smcDelta <= 40 ? "BEAR" : "NEUTRAL") : taDir;
+
+  if (hasSmc && taDir !== "NEUTRAL" && smcDir !== "NEUTRAL" && taDir !== smcDir) {
+    cautions.push("⚡ TA and SMC signals conflict — wait for alignment before entering");
+    // Conflict: pull score back toward neutral
+    score = Math.round(score * 0.7 + 50 * 0.3);
+  }
+
   const direction = score >= 60 ? "BUY" : score <= 40 ? "SELL" : "NEUTRAL";
   return { score, direction, factors, cautions };
 }
@@ -208,7 +275,7 @@ function ScoreMeter({ score }) {
             strokeDasharray={circ} strokeDashoffset={offset} strokeLinecap="round"
             style={{ transition: "stroke-dashoffset 0.8s ease" }} />
         </svg>
-        <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
+<div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
           <div style={{ fontSize: 22, fontWeight: 800, color, lineHeight: 1 }}>{score}</div>
           <div style={{ fontSize: 9, color: C.textD, textTransform: "uppercase" }}>/ 100</div>
         </div>
@@ -242,299 +309,53 @@ function RsiGauge({ value }) {
 }
 
 // ── Unified Chart (lightweight-charts) ────────────────────────────────
-function UnifiedChart({ instrumentKey, data, news, chartType, onChartTypeChange }) {
-  const containerRef = useRef(null);
-  const chartRef = useRef(null);
-
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
-
-    // Destroy previous chart
-    if (chartRef.current) {
-      chartRef.current.remove();
-      chartRef.current = null;
-    }
-
-    const series = data?.fullSeries;
-    if (!series?.length) return;
-
-    const chart = createChart(container, {
-      width: container.clientWidth,
-      height: container.clientHeight,
-      layout: {
-        background: { type: ColorType.Solid, color: C.bg },
-        textColor: C.textM,
-        fontSize: 11,
-        fontFamily: "'Maven Pro', sans-serif",
-      },
-      grid: {
-        vertLines: { color: "rgba(30,45,69,0.4)" },
-        horzLines: { color: "rgba(30,45,69,0.4)" },
-      },
-      crosshair: {
-        mode: 0,
-        vertLine: { labelBackgroundColor: C.purple },
-        horzLine: { labelBackgroundColor: C.purple },
-      },
-      rightPriceScale: { borderColor: C.border, autoScale: true },
-      timeScale: { borderColor: C.border, timeVisible: true, secondsVisible: false },
-      handleScroll: true,
-      handleScale: true,
-    });
-    chartRef.current = chart;
-
-    // ── Main price series ──
-    let mainSeries;
-    if (chartType === "candle") {
-      mainSeries = chart.addSeries(CandlestickSeries, {
-        upColor: C.green, downColor: C.red,
-        borderVisible: false,
-        wickUpColor: C.green, wickDownColor: C.red,
-      });
-      mainSeries.setData(series);
-    } else {
-      mainSeries = chart.addSeries(LineSeries, {
-        color: C.blue, lineWidth: 2,
-      });
-      mainSeries.setData(series.map(d => ({ time: d.time, value: d.close })));
-    }
-
-    // ── Volume histogram (overlay) ──
-    const volSeries = chart.addSeries(HistogramSeries, {
-      priceFormat: { type: "volume" },
-      priceScaleId: "",
-    });
-    volSeries.priceScale().applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } });
-    volSeries.setData(series.map(d => ({
-      time: d.time,
-      value: d.volume || 0,
-      color: d.close >= d.open ? "rgba(16,185,129,0.25)" : "rgba(239,68,68,0.25)",
-    })));
-
-    // ── SMA20 ──
-    const sma20Data = calcSMA(series, Math.min(20, series.length - 1));
-    if (sma20Data.length > 1) {
-      const sma20S = chart.addSeries(LineSeries, { color: C.amber, lineWidth: 1, lastValueVisible: false, priceLineVisible: false });
-      sma20S.setData(sma20Data);
-    }
-
-    // ── SMA50 ──
-    const sma50Data = calcSMA(series, Math.min(50, series.length - 1));
-    if (sma50Data.length > 1) {
-      const sma50S = chart.addSeries(LineSeries, { color: C.purple, lineWidth: 1, lastValueVisible: false, priceLineVisible: false });
-      sma50S.setData(sma50Data);
-    }
-
-    // ── Signal price lines ──
-    if (data?.signal) {
-      const s = data.signal;
-      mainSeries.createPriceLine({ price: s.entry, color: C.cyan, lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title: "ENTRY" });
-      mainSeries.createPriceLine({ price: s.sl, color: C.red, lineWidth: 1, lineStyle: 0, axisLabelVisible: true, title: "SL" });
-      [[s.tp1, "TP1"], [s.tp2, "TP2"], [s.tp3, "TP3"]].forEach(([tp, lbl]) => {
-        if (tp) mainSeries.createPriceLine({ price: tp, color: C.green, lineWidth: 1, lineStyle: 1, axisLabelVisible: true, title: lbl });
-      });
-    }
-
-    // ── Support / Resistance ──
-    (data?.support || []).slice(0, 3).forEach((lvl, i) => {
-      if (lvl) mainSeries.createPriceLine({ price: lvl, color: "rgba(16,185,129,0.6)", lineWidth: 1, lineStyle: 3, axisLabelVisible: true, title: `S${i + 1}` });
-    });
-    (data?.resistance || []).slice(0, 3).forEach((lvl, i) => {
-      if (lvl) mainSeries.createPriceLine({ price: lvl, color: "rgba(239,68,68,0.6)", lineWidth: 1, lineStyle: 3, axisLabelVisible: true, title: `R${i + 1}` });
-    });
-
-    // ── SMC Overlays ──────────────────────────────────────────────────────
-    if (data?.smc) {
-      const smc = data.smc;
-
-      // BOS level
-      if (smc.bos?.level) {
-        mainSeries.createPriceLine({
-          price: smc.bos.level,
-          color: smc.bos.type === "bullish" ? "rgba(16,185,129,0.85)" : "rgba(239,68,68,0.85)",
-          lineWidth: 2, lineStyle: 0, axisLabelVisible: true,
-          title: smc.bos.label,
-        });
-      }
-
-      // CHoCH level
-      if (smc.choch?.level) {
-        mainSeries.createPriceLine({
-          price: smc.choch.level,
-          color: smc.choch.type === "bullish" ? "rgba(6,182,212,0.85)" : "rgba(245,158,11,0.85)",
-          lineWidth: 1, lineStyle: 2, axisLabelVisible: true,
-          title: smc.choch.label,
-        });
-      }
-
-      // Swing high / swing low reference
-      if (smc.lastSwingHigh) {
-        mainSeries.createPriceLine({ price: smc.lastSwingHigh, color: "rgba(239,68,68,0.35)", lineWidth: 1, lineStyle: 3, axisLabelVisible: true, title: "SH" });
-      }
-      if (smc.lastSwingLow) {
-        mainSeries.createPriceLine({ price: smc.lastSwingLow, color: "rgba(16,185,129,0.35)", lineWidth: 1, lineStyle: 3, axisLabelVisible: true, title: "SL·" });
-      }
-
-      // Bullish Order Blocks — high + low boundary pair
-      (smc.bullishOBs || []).forEach((ob, i) => {
-        const alpha = ob.inZone ? 0.9 : 0.45;
-        const color = `rgba(16,185,129,${alpha})`;
-        mainSeries.createPriceLine({ price: ob.high, color, lineWidth: ob.inZone ? 2 : 1, lineStyle: 0, axisLabelVisible: true, title: ob.inZone ? `Bull OB ▲` : `OB${i + 1}↑` });
-        mainSeries.createPriceLine({ price: ob.low,  color, lineWidth: ob.inZone ? 2 : 1, lineStyle: 0, axisLabelVisible: false });
-      });
-
-      // Bearish Order Blocks
-      (smc.bearishOBs || []).forEach((ob, i) => {
-        const alpha = ob.inZone ? 0.9 : 0.45;
-        const color = `rgba(239,68,68,${alpha})`;
-        mainSeries.createPriceLine({ price: ob.high, color, lineWidth: ob.inZone ? 2 : 1, lineStyle: 0, axisLabelVisible: true, title: ob.inZone ? `Bear OB ▼` : `OB${i + 1}↓` });
-        mainSeries.createPriceLine({ price: ob.low,  color, lineWidth: ob.inZone ? 2 : 1, lineStyle: 0, axisLabelVisible: false });
-      });
-
-      // Breaker Blocks
-      (smc.breakerBlocks || []).forEach((b, i) => {
-        const color = b.flipType === "bullish_breaker" ? "rgba(6,182,212,0.75)" : "rgba(139,92,246,0.75)";
-        const label = b.flipType === "bullish_breaker" ? `BB↑${i + 1}` : `BB↓${i + 1}`;
-        mainSeries.createPriceLine({ price: b.high, color, lineWidth: 1, lineStyle: 1, axisLabelVisible: true, title: label });
-        mainSeries.createPriceLine({ price: b.low,  color, lineWidth: 1, lineStyle: 1, axisLabelVisible: false });
-      });
-
-      // Bullish FVGs
-      (smc.bullishFVGs || []).forEach((f, i) => {
-        mainSeries.createPriceLine({ price: f.high, color: "rgba(16,185,129,0.38)", lineWidth: 1, lineStyle: 3, axisLabelVisible: i === 0, title: i === 0 ? "FVG↑" : "" });
-        mainSeries.createPriceLine({ price: f.low,  color: "rgba(16,185,129,0.38)", lineWidth: 1, lineStyle: 3, axisLabelVisible: false });
-      });
-
-      // Bearish FVGs
-      (smc.bearishFVGs || []).forEach((f, i) => {
-        mainSeries.createPriceLine({ price: f.high, color: "rgba(239,68,68,0.38)", lineWidth: 1, lineStyle: 3, axisLabelVisible: i === 0, title: i === 0 ? "FVG↓" : "" });
-        mainSeries.createPriceLine({ price: f.low,  color: "rgba(239,68,68,0.38)", lineWidth: 1, lineStyle: 3, axisLabelVisible: false });
-      });
-    }
-
-    // ── WVPPP ──
-    const wvppp = calcWVPPP(series);
-    if (wvppp) {
-      mainSeries.createPriceLine({
-        price: wvppp,
-        color: C.cyan,
-        lineWidth: 2,
-        lineStyle: 0,
-        axisLabelVisible: true,
-        title: "WVPPP",
-      });
-    }
-
-    // ── RSI divergence markers ──
-    const divMarkers = detectRSIDivergence(series);
-
-    // ── News markers ──
-    let newsMarkers = [];
-    if (news?.length && chartType === "candle") {
-      newsMarkers = news
-        .filter(n => n.affected?.includes(instrumentKey))
-        .map(n => ({
-          time: Math.floor(new Date(n.pubDate).getTime() / 1000),
-          position: "belowBar",
-          color: n.impact === "HIGH" ? C.red : n.impact === "MEDIUM" ? C.amber : C.green,
-          shape: "circle",
-          text: n.impact === "HIGH" ? "!" : "N",
-        }))
-        .filter(m => series.some(d => {
-          const t = typeof d.time === "number" ? d.time : Math.floor(new Date(d.time + "T00:00:00Z").getTime() / 1000);
-          return Math.abs(t - m.time) < 86400 * 7;
-        }));
-    }
-
-    // ── Liquidity sweep markers ──
-    const sweepMarkers = (data?.smc?.liquiditySweeps || []).map(sw => {
-      const bar = series[sw.index];
-      if (!bar) return null;
-      return {
-        time: bar.time,
-        position: sw.type === "bullish" ? "belowBar" : "aboveBar",
-        color: sw.type === "bullish" ? "rgba(6,182,212,0.9)" : "rgba(245,158,11,0.9)",
-        shape: sw.type === "bullish" ? "arrowUp" : "arrowDown",
-        text: sw.type === "bullish" ? "Sweep↑" : "Sweep↓",
-        size: 1,
-      };
-    }).filter(Boolean);
-
-    // ── BOS / CHoCH markers ──
-    const smcStructMarkers = [];
-    if (data?.smc?.bos) {
-      const lastBar = series[series.length - 1];
-      if (lastBar) smcStructMarkers.push({ time: lastBar.time, position: data.smc.bos.type === "bullish" ? "belowBar" : "aboveBar", color: data.smc.bos.type === "bullish" ? C.green : C.red, shape: data.smc.bos.type === "bullish" ? "arrowUp" : "arrowDown", text: data.smc.bos.label, size: 2 });
-    }
-    if (data?.smc?.choch) {
-      const prevBar = series[series.length - 2];
-      if (prevBar) smcStructMarkers.push({ time: prevBar.time, position: data.smc.choch.type === "bullish" ? "belowBar" : "aboveBar", color: data.smc.choch.type === "bullish" ? C.cyan : C.amber, shape: "circle", text: data.smc.choch.label, size: 1 });
-    }
-
-    // Merge + deduplicate by time, then set once
-    const allMarkers = [...divMarkers, ...newsMarkers, ...sweepMarkers, ...smcStructMarkers]
-      .sort((a, b) => (typeof a.time === "number" ? a.time : 0) - (typeof b.time === "number" ? b.time : 0));
-    if (allMarkers.length) {
-      try {
-        const mp = createSeriesMarkers(mainSeries);
-        mp.setMarkers(allMarkers);
-      } catch (_) {}
-    }
-
-    chart.timeScale().fitContent();
-
-    const handleResize = () => {
-      if (container && chartRef.current) {
-        chartRef.current.applyOptions({
-          width: container.clientWidth,
-          height: container.clientHeight,
-        });
-      }
-    };
-    window.addEventListener("resize", handleResize);
-
-    return () => {
-      window.removeEventListener("resize", handleResize);
-      if (chartRef.current) {
-        chartRef.current.remove();
-        chartRef.current = null;
-      }
-    };
-  }, [data, instrumentKey, news, chartType]);
-
-  const hasData = data?.fullSeries?.length > 0;
-
+function UnifiedChart({ instrumentKey, tfLabel }) {
   return (
-    <div style={{ flex: 1, minHeight: 0, position: "relative", background: C.bg }}>
-      {!hasData && (
-        <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 10, color: C.textD }}>
-          <RefreshCw size={24} style={{ animation: "spin 1.5s linear infinite" }} />
-          <span style={{ fontSize: 12 }}>Loading chart data…</span>
-        </div>
-      )}
-      <div ref={containerRef} style={{ width: "100%", height: "100%" }} />
+    <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0, background: C.bg }}>
+      <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
+        <TradingViewChart instrumentKey={instrumentKey} tfLabel={tfLabel} />
+      </div>
     </div>
   );
 }
 
 // ── Analysis Cards ────────────────────────────────────────────────────
-function AnalysisCards({ data, instrumentKey }) {
-  const { trend, structure, rsi, macd, bb, sma } = data;
+function AnalysisCards({ data, instrumentKey, scoring }) {
+  const { trend, structure, rsi, sma } = data;
+  const sc = scoring || {};
+  const sigDir  = sc.direction || "WAIT";
+  const sigCol  = sigDir === "BUY" ? C.green : sigDir === "SELL" ? C.red : C.amber;
   const cards = [
-    { label: "Trend", icon: trend === "BULLISH" ? <TrendingUp size={13}/> : trend === "BEARISH" ? <TrendingDown size={13}/> : <Minus size={13}/>, value: trend || "—", sub: sma ? `SMA20: ${fmtPrice(instrumentKey, sma.sma20)}` : null, color: trend === "BULLISH" ? C.green : trend === "BEARISH" ? C.red : C.textM },
-    { label: "RSI (14)", icon: <Activity size={13}/>, value: rsi ? rsi.toFixed(1) : "—", sub: rsi > 70 ? "Overbought" : rsi < 30 ? "Oversold" : rsi > 55 ? "Bullish" : rsi < 45 ? "Bearish" : "Neutral", color: rsi > 70 ? C.red : rsi < 30 ? C.green : C.amber },
-    { label: "MACD", icon: <BarChart2 size={13}/>, value: macd?.cross === "bullish" ? "Bull Cross" : macd?.cross === "bearish" ? "Bear Cross" : macd?.histogram > 0 ? "Positive" : "Negative", sub: macd ? `Hist: ${macd.histogram?.toFixed(4)}` : null, color: macd?.cross === "bullish" || macd?.histogram > 0 ? C.green : C.red },
-    { label: "Structure", icon: <Target size={13}/>, value: structure || "—", sub: null, color: structure === "BREAKOUT" ? C.green : structure === "BREAKDOWN" ? C.red : structure === "RANGING" ? C.amber : C.textM },
+    {
+      label: "Signal", icon: <Zap size={13}/>,
+      value: sigDir, sub: `Score ${sc.score ?? "—"}/100`,
+      color: sigCol, highlight: true,
+    },
+    {
+      label: "Trend", icon: trend === "BULLISH" ? <TrendingUp size={13}/> : trend === "BEARISH" ? <TrendingDown size={13}/> : <Minus size={13}/>,
+      value: trend || "—", sub: sma ? `SMA20: ${fmtPrice(instrumentKey, sma.sma20)}` : null,
+      color: trend === "BULLISH" ? C.green : trend === "BEARISH" ? C.red : C.textM,
+    },
+    {
+      label: "RSI (14)", icon: <Activity size={13}/>,
+      value: rsi ? rsi.toFixed(1) : "—",
+      sub: rsi > 70 ? "Overbought" : rsi < 30 ? "Oversold" : rsi > 55 ? "Bullish" : rsi < 45 ? "Bearish" : "Neutral",
+      color: rsi > 70 ? C.red : rsi < 30 ? C.green : C.amber,
+    },
+    {
+      label: "Structure", icon: <Target size={13}/>,
+      value: structure || "—", sub: sc.conflicted ? "⚠ Conflicted" : null,
+      color: structure === "BREAKOUT" ? C.green : structure === "BREAKDOWN" ? C.red : structure === "RANGING" ? C.amber : C.textM,
+    },
   ];
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 8 }}>
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(110px,1fr))", gap: 8 }}>
       {cards.map(c => (
-        <div key={c.label} style={{ background: C.bg3, borderRadius: 8, padding: "9px 12px", border: `1px solid ${C.border}`, display: "flex", flexDirection: "column", gap: 4 }}>
+        <div key={c.label} style={{ background: c.highlight ? `${sigCol}10` : C.bg3, borderRadius: 8, padding: "9px 12px", border: `1px solid ${c.highlight ? sigCol + "40" : C.border}`, display: "flex", flexDirection: "column", gap: 4 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 4, color: C.textD, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.4px" }}>
             <span style={{ color: c.color }}>{c.icon}</span>{c.label}
           </div>
-          <div style={{ fontSize: 12, fontWeight: 700, color: c.color }}>{c.value}</div>
+          <div style={{ fontSize: 13, fontWeight: 800, color: c.color }}>{c.value}</div>
           <div style={{ fontSize: 9, color: C.textD, minHeight: 12 }}>{c.sub || ""}</div>
         </div>
       ))}
@@ -567,14 +388,83 @@ function KeyLevels({ data, instrumentKey }) {
   );
 }
 
+// ── Curated insight engine — no external API ─────────────────────────
+function buildInsight(instrumentKey, data, scoring, instStatic) {
+  const { direction, score, conflicted, cautions } = scoring;
+  const { trend, structure, rsi, sma, bb, current } = data;
+  const inst = instStatic || {};
+  const cot  = inst.cot || {};
+  const sent = inst.sentiment || {};
+
+  const lines = [];
+
+  // 1. Master signal sentence
+  if (direction === "BUY") {
+    lines.push(`Price action and smart money structure both favour longs with a composite score of ${score}/100.`);
+  } else if (direction === "SELL") {
+    lines.push(`Technical and SMC confluence points short — composite score ${score}/100 — favour selling into strength.`);
+  } else if (conflicted) {
+    lines.push(`TA and SMC are pointing in opposite directions (score ${score}/100). Hold off until they realign.`);
+  } else {
+    lines.push(`No clear directional edge (score ${score}/100). Market is ranging — wait for a breakout trigger.`);
+  }
+
+  // 2. COT positioning
+  if (cot.netSpec != null) {
+    const netK = Math.round(cot.netSpec / 1000);
+    const cotBias = cot.netSpec > 30000 ? "spec longs are crowded" : cot.netSpec < -30000 ? "spec shorts are elevated" : "spec positioning is neutral";
+    lines.push(`COT (${cot.date || "latest"}): net specs ${netK > 0 ? "+" : ""}${netK}K — ${cotBias}.`);
+  } else if (inst.label?.includes("JPY") || instrumentKey === "GBPJPY") {
+    lines.push(`GBPJPY is a synthetic cross — read via GBP (${cot.gbpNet ? (cot.gbpNet/1000).toFixed(0)+"K" : "n/a"}) and JPY (${cot.jpyNet ? (cot.jpyNet/1000).toFixed(0)+"K" : "n/a"}) positioning.`);
+  }
+
+  // 3. Retail sentiment contrarian
+  if (sent.retailLong != null) {
+    const rl = sent.retailLong;
+    if (rl >= 70) lines.push(`Retail is ${rl}% long — crowded long, expect smart money to lean short.`);
+    else if (rl <= 30) lines.push(`Retail is ${rl}% long — crowded short, contrarian bias favours longs.`);
+    else lines.push(`Retail sentiment is split ${rl}/${100 - rl} — no strong contrarian edge at this time.`);
+  }
+
+  // 4. RSI context
+  if (rsi != null) {
+    if (rsi > 70) lines.push(`RSI at ${rsi.toFixed(1)} is overbought — pullback or consolidation likely before continuation.`);
+    else if (rsi < 30) lines.push(`RSI at ${rsi.toFixed(1)} is oversold — watch for a bounce or reversal signal.`);
+    else lines.push(`RSI ${rsi.toFixed(1)} is in neutral territory, leaving room to move in either direction.`);
+  }
+
+  // 5. Structure
+  if (structure === "BREAKOUT") lines.push(`Price is breaking structure to the upside — momentum favours continuation longs.`);
+  else if (structure === "BREAKDOWN") lines.push(`Market structure is breaking down — shorts have the structural edge.`);
+  else if (structure === "RANGING") lines.push(`Price is ranging — trade the extremes of the range, avoid trend entries.`);
+
+  // 6. BB squeeze
+  if (bb && current) {
+    const bandWidth = bb.upper - bb.lower;
+    const pctB = bandWidth > 0 ? ((current - bb.lower) / bandWidth) * 100 : 50;
+    if (pctB > 85) lines.push(`Price is hugging the upper Bollinger Band — statistically stretched to the upside.`);
+    else if (pctB < 15) lines.push(`Price is pressing the lower Bollinger Band — mean-reversion setup possible.`);
+  }
+
+  // 7. Cautions
+  if (cautions.length > 0) {
+    lines.push(`Key caution: ${cautions[0].replace(/^[⚡⚠️·\s]+/, "")}.`);
+  }
+
+  return lines.slice(0, 4).join(" ");
+}
+
 // ── Verdict Panel ─────────────────────────────────────────────────────
-function VerdictPanel({ instrumentKey, data, scoring, aiResult, aiLoading, onAiAnalyze }) {
+function VerdictPanel({ instrumentKey, data, scoring, instStatic }) {
   const { signal } = data;
   const { score, direction, factors, cautions } = scoring;
-  const isBuy = direction === "BUY";
+  const isBuy  = direction === "BUY";
   const isSell = direction === "SELL";
+  const insight = buildInsight(instrumentKey, data, scoring, instStatic);
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      {/* Score + headline */}
       <div style={{ background: C.bg3, borderRadius: 10, padding: 14, border: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 14 }}>
         <ScoreMeter score={score} />
         <div style={{ flex: 1 }}>
@@ -582,9 +472,11 @@ function VerdictPanel({ instrumentKey, data, scoring, aiResult, aiLoading, onAiA
             {isBuy ? "Bullish Setup" : isSell ? "Bearish Setup" : "No Clear Signal"}
           </div>
           <div style={{ fontSize: 11, color: C.textM, lineHeight: 1.5 }}>
-            {isBuy ? "Majority of indicators align bullish. Consider long positions at key levels."
-              : isSell ? "Majority of indicators align bearish. Consider short positions at key levels."
-              : "Mixed signals. Wait for clearer confirmation before entering."}
+            {isBuy ? "TA and SMC agree bullish. Consider long positions at key levels."
+              : isSell ? "TA and SMC agree bearish. Consider short positions at key levels."
+              : scoring.conflicted
+                ? "TA and SMC conflict — stand aside until both align."
+                : "Mixed signals. Wait for clearer confirmation before entering."}
           </div>
           {signal && (
             <div style={{ marginTop: 6, fontSize: 10, color: C.textD }}>
@@ -595,6 +487,7 @@ function VerdictPanel({ instrumentKey, data, scoring, aiResult, aiLoading, onAiA
         </div>
       </div>
 
+      {/* Trade setup grid */}
       {signal && (
         <div style={{ background: C.bg3, borderRadius: 10, padding: 12, border: `1px solid ${isBuy ? C.greenBd : C.redBd}` }}>
           <div style={{ fontSize: 10, fontWeight: 600, color: C.textM, textTransform: "uppercase", letterSpacing: "0.6px", marginBottom: 8, display: "flex", alignItems: "center", gap: 5 }}>
@@ -602,12 +495,12 @@ function VerdictPanel({ instrumentKey, data, scoring, aiResult, aiLoading, onAiA
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 5 }}>
             {[
-              { label: "Entry", value: fmtPrice(instrumentKey, signal.entry), color: C.cyan },
-              { label: "Stop Loss", value: fmtPrice(instrumentKey, signal.sl), color: C.red },
-              { label: "TP 1", value: fmtPrice(instrumentKey, signal.tp1), color: C.green },
-              { label: "TP 2", value: fmtPrice(instrumentKey, signal.tp2), color: C.green },
-              { label: "TP 3", value: signal.tp3 ? fmtPrice(instrumentKey, signal.tp3) : "—", color: C.green },
-              { label: "R:R Ratio", value: signal.rr, color: C.amber },
+              { label: "Entry",    value: fmtPrice(instrumentKey, signal.entry), color: C.cyan  },
+              { label: "Stop Loss",value: fmtPrice(instrumentKey, signal.sl),    color: C.red   },
+              { label: "TP 1",     value: fmtPrice(instrumentKey, signal.tp1),   color: C.green },
+              { label: "TP 2",     value: fmtPrice(instrumentKey, signal.tp2),   color: C.green },
+              { label: "TP 3",     value: signal.tp3 ? fmtPrice(instrumentKey, signal.tp3) : "—", color: C.green },
+              { label: "R:R Ratio",value: signal.rr,                             color: C.amber },
             ].map(row => (
               <div key={row.label} style={{ background: C.bg2, borderRadius: 5, padding: "6px 8px", border: `1px solid ${C.border}` }}>
                 <div style={{ fontSize: 9, color: C.textD, textTransform: "uppercase" }}>{row.label}</div>
@@ -623,34 +516,26 @@ function VerdictPanel({ instrumentKey, data, scoring, aiResult, aiLoading, onAiA
         </div>
       )}
 
+      {/* Cautions */}
       {cautions.length > 0 && (
         <div style={{ background: C.amberBg, borderRadius: 8, padding: 10, border: `1px solid ${C.amberBd}` }}>
           <div style={{ fontSize: 10, fontWeight: 600, color: C.amber, display: "flex", alignItems: "center", gap: 5, marginBottom: 6, textTransform: "uppercase" }}>
             <AlertTriangle size={11} /> Cautions
           </div>
           {cautions.map((c, i) => (
-            <div key={i} style={{ fontSize: 11, color: C.textM, padding: "3px 0", borderBottom: i < cautions.length - 1 ? `1px solid ${C.amberBd}` : "none" }}>
-              · {c}
-            </div>
+            <div key={i} style={{ fontSize: 11, color: C.textM, padding: "3px 0", borderBottom: i < cautions.length - 1 ? `1px solid ${C.amberBd}` : "none" }}>· {c}</div>
           ))}
         </div>
       )}
 
-      <div style={{ background: C.purpleBg, borderRadius: 10, border: `1px solid rgba(139,92,246,0.25)`, overflow: "hidden" }}>
-        <div style={{ padding: "9px 12px", display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: `1px solid rgba(139,92,246,0.15)` }}>
-          <div style={{ fontSize: 10, fontWeight: 600, color: C.purple, display: "flex", alignItems: "center", gap: 5, textTransform: "uppercase" }}>
-            <Zap size={11} /> Gemini AI Analysis
-          </div>
-          <button onClick={onAiAnalyze} disabled={aiLoading}
-            style={{ padding: "3px 8px", borderRadius: 4, fontSize: 10, fontWeight: 600, background: aiLoading ? C.bg3 : C.purple, color: aiLoading ? C.textD : "#fff", border: "none", cursor: aiLoading ? "default" : "pointer" }}>
-            {aiLoading ? "Analyzing…" : aiResult ? "Refresh" : "Analyze"}
-          </button>
+      {/* AI Insight — generated from curated data */}
+      <div style={{ background: C.bg3, borderRadius: 10, border: `1px solid ${C.border}`, overflow: "hidden" }}>
+        <div style={{ padding: "9px 12px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 6 }}>
+          <Zap size={11} color={C.purple} />
+          <span style={{ fontSize: 10, fontWeight: 700, color: C.purple, textTransform: "uppercase", letterSpacing: 0.6 }}>Intelligence Summary</span>
         </div>
-        <div style={{ padding: "10px 12px", minHeight: 50 }}>
-          {aiResult
-            ? <div style={{ fontSize: 11, color: C.textM, lineHeight: 1.7, whiteSpace: "pre-wrap" }}>{aiResult}</div>
-            : <div style={{ fontSize: 11, color: C.textD, textAlign: "center", padding: "10px 0" }}>Click Analyze for AI-powered insights</div>
-          }
+        <div style={{ padding: "10px 12px" }}>
+          <p style={{ margin: 0, fontSize: 11, color: C.textM, lineHeight: 1.75 }}>{insight || "Load chart data to generate insight."}</p>
         </div>
       </div>
     </div>
@@ -823,7 +708,7 @@ function SMCPanel({ data, instrumentKey }) {
                 <span style={{ fontSize: 10, fontWeight: 700, color: smc.bos.type === "bullish" ? C.green : C.red }}>BOS</span>
                 <span style={{ fontSize: 9, color: C.textM, marginLeft: 5 }}>{smc.bos.type?.toUpperCase()}</span>
               </div>
-              <span style={{ fontSize: 11, fontWeight: 600, fontFamily: "monospace", color: C.text }}>{fmtPrice(instrumentKey, smc.bos.level)}</span>
+              <span style={{ fontSize: 11, fontWeight: 600, fontFamily: "var(--font-geist-mono), monospace", color: C.text }}>{fmtPrice(instrumentKey, smc.bos.level)}</span>
             </div>
           )}
           {smc.choch && (
@@ -832,7 +717,7 @@ function SMCPanel({ data, instrumentKey }) {
                 <span style={{ fontSize: 10, fontWeight: 700, color: C.purple }}>CHoCH</span>
                 <span style={{ fontSize: 9, color: C.textM, marginLeft: 5 }}>{smc.choch.type?.toUpperCase()}</span>
               </div>
-              <span style={{ fontSize: 11, fontWeight: 600, fontFamily: "monospace", color: C.text }}>{fmtPrice(instrumentKey, smc.choch.level)}</span>
+              <span style={{ fontSize: 11, fontWeight: 600, fontFamily: "var(--font-geist-mono), monospace", color: C.text }}>{fmtPrice(instrumentKey, smc.choch.level)}</span>
             </div>
           )}
         </div>
@@ -846,13 +731,13 @@ function SMCPanel({ data, instrumentKey }) {
             {smc.lastSwingHigh && (
               <div style={{ background: C.bg2, borderRadius: 5, padding: "6px 8px" }}>
                 <div style={{ fontSize: 9, color: C.textD }}>Last Swing High</div>
-                <div style={{ fontSize: 11, fontWeight: 600, color: C.red, fontFamily: "monospace" }}>{fmtPrice(instrumentKey, smc.lastSwingHigh)}</div>
+                <div style={{ fontSize: 11, fontWeight: 600, color: C.red, fontFamily: "var(--font-geist-mono), monospace" }}>{fmtPrice(instrumentKey, smc.lastSwingHigh)}</div>
               </div>
             )}
             {smc.lastSwingLow && (
               <div style={{ background: C.bg2, borderRadius: 5, padding: "6px 8px" }}>
                 <div style={{ fontSize: 9, color: C.textD }}>Last Swing Low</div>
-                <div style={{ fontSize: 11, fontWeight: 600, color: C.green, fontFamily: "monospace" }}>{fmtPrice(instrumentKey, smc.lastSwingLow)}</div>
+                <div style={{ fontSize: 11, fontWeight: 600, color: C.green, fontFamily: "var(--font-geist-mono), monospace" }}>{fmtPrice(instrumentKey, smc.lastSwingLow)}</div>
               </div>
             )}
           </div>
@@ -879,7 +764,7 @@ function SMCPanel({ data, instrumentKey }) {
                     {ob.inZone && <span style={{ fontSize: 8, marginLeft: 4, padding: "1px 4px", borderRadius: 2, background: C.amberBg, color: C.amber }}>IN ZONE</span>}
                   </div>
                 </div>
-                <div style={{ textAlign: "right", fontSize: 10, fontFamily: "monospace" }}>
+                <div style={{ textAlign: "right", fontSize: 10, fontFamily: "var(--font-geist-mono), monospace" }}>
                   <div style={{ color: C.red, fontSize: 9 }}>{fmtPrice(instrumentKey, ob.high)}</div>
                   <div style={{ color: C.green, fontSize: 9 }}>{fmtPrice(instrumentKey, ob.low)}</div>
                 </div>
@@ -904,7 +789,7 @@ function SMCPanel({ data, instrumentKey }) {
                   <span style={{ fontSize: 9, fontWeight: 700, color: col }}>{f.type}</span>
                 </div>
                 <div style={{ textAlign: "right" }}>
-                  <div style={{ fontSize: 10, fontFamily: "monospace", color: C.textM }}>
+                  <div style={{ fontSize: 10, fontFamily: "var(--font-geist-mono), monospace", color: C.textM }}>
                     {fmtPrice(instrumentKey, f.low)} – {fmtPrice(instrumentKey, f.high)}
                   </div>
                   <div style={{ fontSize: 9, color: C.textD }}>Gap: {fmtPrice(instrumentKey, size)}</div>
@@ -932,7 +817,7 @@ function SMCPanel({ data, instrumentKey }) {
                       {s.magnitude && <span style={{ fontSize: 8, color: C.textD, marginLeft: 4 }}>×{s.magnitude.toFixed(1)} ATR</span>}
                     </div>
                   </div>
-                  <span style={{ fontSize: 10, fontFamily: "monospace", color: C.textM }}>{fmtPrice(instrumentKey, s.level)}</span>
+                  <span style={{ fontSize: 10, fontFamily: "var(--font-geist-mono), monospace", color: C.textM }}>{fmtPrice(instrumentKey, s.level)}</span>
                 </div>
                 {s.note && <div style={{ fontSize: 9, color: C.textD, marginTop: 2, marginLeft: 17 }}>{s.note}</div>}
               </div>
@@ -960,7 +845,7 @@ function InstrumentItem({ ikey, data, livePrice, scoring, selected, onClick }) {
   const isUp = (change ?? 0) >= 0;
   return (
     <button onClick={() => onClick(ikey)}
-      style={{ width: "100%", textAlign: "left", background: selected ? C.bg3 : "transparent", border: `1px solid ${selected ? C.borderL : "transparent"}`, borderRadius: 8, padding: "9px 10px", cursor: "pointer", transition: "all 0.15s", marginBottom: 3 }}>
+      style={{ width: "100%", minWidth: 120, textAlign: "left", background: selected ? C.bg3 : "transparent", border: `1px solid ${selected ? C.borderL : "transparent"}`, borderRadius: 8, padding: "9px 10px", cursor: "pointer", transition: "all 0.15s", marginBottom: 3 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
         <div>
           <div style={{ fontSize: 11, fontWeight: 700, color: selected ? C.text : C.textM }}>{inst.label}</div>
@@ -970,7 +855,7 @@ function InstrumentItem({ ikey, data, livePrice, scoring, selected, onClick }) {
           <div style={{ fontSize: 10, fontWeight: 600, color: isUp ? C.green : C.red, display: "flex", alignItems: "center", gap: 1 }}>
             {isUp ? <ArrowUpRight size={9}/> : <ArrowDownRight size={9}/>}{fmtPct(change)}
           </div>
-          <div style={{ fontSize: 9, color: C.textD, fontFamily: "monospace" }}>{fmtPrice(ikey, price)}</div>
+          <div style={{ fontSize: 9, color: C.textD, fontFamily: "var(--font-geist-mono), monospace" }}>{fmtPrice(ikey, price)}</div>
         </div>
       </div>
       <div style={{ display: "flex", gap: 3, marginTop: 5 }}>
@@ -989,26 +874,117 @@ function InstrumentItem({ ikey, data, livePrice, scoring, selected, onClick }) {
 }
 
 // ── Main Component ────────────────────────────────────────────────────
-export default function TradingIntelligence() {
+// ── Signal Tracking Panel ────────────────────────────────────────────
+function SignalPanel({ openSignals, instrumentKey, liveData }) {
+  const sigs = (openSignals || []).filter(s => s.instrument === instrumentKey);
+  const fmtP = (key, v) => {
+    if (v == null) return "—";
+    if (key === "BTCUSD") return "$" + Math.round(v).toLocaleString();
+    if (key === "XAUUSD") return v.toFixed(2);
+    return Number(v).toFixed(key?.includes("JPY") ? 3 : 5);
+  };
+  if (sigs.length === 0) return (
+    <div style={{ textAlign: "center", padding: "32px 12px", color: C.textD }}>
+      <Target size={28} style={{ marginBottom: 10, opacity: 0.4 }} />
+      <div style={{ fontSize: 12 }}>No open signals for {instrumentKey}</div>
+      <div style={{ fontSize: 11, marginTop: 6, color: C.textD }}>Go to Trade Lab → Signals to create one</div>
+    </div>
+  );
+  return (
+    <div>
+      <div style={{ fontSize: 11, color: C.textD, marginBottom: 10 }}>{sigs.length} active signal{sigs.length > 1 ? "s" : ""} · auto-closes when TP/SL hit</div>
+      {sigs.map(sg => {
+        const cur = liveData?.[instrumentKey]?.price ?? null;
+        const entry = Number(sg.entryPrice);
+        const tp = sg.targetPrice ? Number(sg.targetPrice) : null;
+        const sl = sg.stopLoss ? Number(sg.stopLoss) : null;
+        const isLong = sg.direction === "Long";
+        const slBreached = cur && sl && (isLong ? cur <= sl : cur >= sl);
+        const tpBreached = cur && tp && (isLong ? cur >= tp : cur <= tp);
+        const pnlPct = cur ? (((cur - entry) / entry) * 100 * (isLong ? 1 : -1)).toFixed(2) : null;
+        const tpProgress = (tp && cur) ? Math.min(100, Math.max(0, Math.abs(cur - entry) / Math.abs(tp - entry) * 100)) : 0;
+        const dirColor = isLong ? C.green : C.red;
+        const dirBg = isLong ? C.greenBg : C.redBg;
+        const dirBd = isLong ? C.greenBd : C.redBd;
+        return (
+          <div key={sg.id} style={{ background: C.bg3, borderRadius: 10, padding: 12, marginBottom: 10, border: `1px solid ${slBreached ? C.red : tpBreached ? C.green : sg.grade === "A" ? "#8b5cf660" : C.border}`, opacity: slBreached ? 0.7 : 1 }}>
+            {(slBreached || tpBreached) && (
+              <div style={{ padding: "5px 10px", borderRadius: 6, background: slBreached ? C.redBg : C.greenBg, border: `1px solid ${slBreached ? C.redBd : C.greenBd}`, marginBottom: 8, fontSize: 11, fontWeight: 700, color: slBreached ? C.red : C.green }}>
+                {slBreached ? "⚠ SL HIT — closing…" : "✓ TP HIT — closing…"}
+              </div>
+            )}
+            {/* Header */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 5, background: dirBg, color: dirColor, border: `1px solid ${dirBd}` }}>{sg.direction.toUpperCase()}</span>
+                {sg.grade && <span style={{ fontSize: 9, fontWeight: 800, padding: "2px 5px", borderRadius: 4, background: "#8b5cf620", color: C.accent, border: "1px solid #8b5cf640" }}>{sg.grade}</span>}
+              </div>
+              <span style={{ fontSize: 11, fontWeight: 700, color: pnlPct === null ? C.textD : Number(pnlPct) >= 0 ? C.green : C.red }}>{pnlPct === null ? "—" : `${pnlPct >= 0 ? "+" : ""}${pnlPct}%`}</span>
+            </div>
+            {/* Price levels */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6, marginBottom: 8 }}>
+              <div style={{ background: C.bg, borderRadius: 6, padding: "5px 7px" }}>
+                <div style={{ fontSize: 9, color: C.textD, marginBottom: 2 }}>ENTRY</div>
+                <div style={{ fontSize: 11, fontFamily: "var(--font-geist-mono), monospace", color: C.text, fontWeight: 600 }}>{fmtP(instrumentKey, entry)}</div>
+              </div>
+              <div style={{ background: `${C.green}10`, borderRadius: 6, padding: "5px 7px", border: `1px solid ${C.greenBd}` }}>
+                <div style={{ fontSize: 9, color: C.green, marginBottom: 2 }}>TP</div>
+                <div style={{ fontSize: 11, fontFamily: "var(--font-geist-mono), monospace", color: C.green, fontWeight: 600 }}>{fmtP(instrumentKey, tp)}</div>
+              </div>
+              <div style={{ background: `${C.red}10`, borderRadius: 6, padding: "5px 7px", border: `1px solid ${C.redBd}` }}>
+                <div style={{ fontSize: 9, color: C.red, marginBottom: 2 }}>SL</div>
+                <div style={{ fontSize: 11, fontFamily: "var(--font-geist-mono), monospace", color: C.red, fontWeight: 600 }}>{fmtP(instrumentKey, sl)}</div>
+              </div>
+            </div>
+            {/* Current price */}
+            {cur && (
+              <div style={{ marginBottom: 8 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: C.textD, marginBottom: 4 }}>
+                  <span>Current {fmtP(instrumentKey, cur)}</span><span style={{ color: C.green }}>{tpProgress.toFixed(0)}% to TP</span>
+                </div>
+                <div style={{ height: 4, background: C.bg, borderRadius: 2, overflow: "hidden" }}>
+                  <div style={{ height: "100%", width: `${tpProgress}%`, background: `linear-gradient(90deg, ${dirColor}, ${C.green})`, borderRadius: 2, transition: "width 0.5s" }} />
+                </div>
+              </div>
+            )}
+            {/* R:R + Conf */}
+            <div style={{ display: "flex", gap: 8, fontSize: 10, color: C.textD }}>
+              {sg.riskReward && <span>R:R {sg.riskReward}</span>}
+              <span>Conf {sg.confidence}/10</span>
+              <span style={{ marginLeft: "auto" }}>{new Date(sg.createdAt).toLocaleDateString()}</span>
+            </div>
+            {sg.notes && <div style={{ fontSize: 10, color: C.textD, marginTop: 6, lineHeight: 1.5, borderTop: `1px solid ${C.border}`, paddingTop: 6 }}>{sg.notes.slice(0, 120)}{sg.notes.length > 120 ? "…" : ""}</div>}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+export default function TradingIntelligence({ openSignals, liveData: externalLiveData, onSignalClosed }) {
   const [instruments, setInstruments] = useState({});
   const [news, setNews] = useState([]);
   const [loading, setLoading] = useState(true);
   const [tfLoading, setTfLoading] = useState(false);
   const [error, setError] = useState(null);
   const [selected, setSelected] = useState("XAUUSD");
-  const [activeTab, setActiveTab] = useState("verdict");
+  const [activeTab, setActiveTab] = useState("signal");
   const [aiResults, setAiResults] = useState({});
   const [aiLoading, setAiLoading] = useState(false);
   const [lastUpdated, setLastUpdated] = useState(null);
-  const [timeframe, setTimeframe] = useState(TIMEFRAMES[5]); // default 1D
-  const [chartType, setChartType] = useState("candle");
+  const [timeframe, setTimeframe] = useState(() => {
+    try {
+      const saved = typeof window !== "undefined" && localStorage.getItem("chart_tf");
+      return TIMEFRAMES.find(t => t.label === saved) || TIMEFRAMES[3]; // default 1H
+    } catch { return TIMEFRAMES[3]; }
+  });
   const [livePrices, setLivePrices] = useState({});
   const [nextRefresh, setNextRefresh] = useState(300); // seconds countdown
 
   const load = useCallback(async (tf = null) => {
     // tf=null means initial load (shows sidebar skeleton)
     // tf=<timeframe> means user switched timeframe (shows subtle loading dot)
-    const activeTf = tf || TIMEFRAMES[5];
+    const activeTf = tf || timeframe;
     const isInitial = tf === null;
     if (isInitial) setLoading(true); else setTfLoading(true);
     setError(null);
@@ -1055,8 +1031,29 @@ export default function TradingIntelligence() {
     return () => clearInterval(id);
   }, []);
 
+  // Auto-close signals whose TP or SL has been breached by live price
+  useEffect(() => {
+    if (!openSignals?.length || !Object.keys(livePrices).length) return;
+    openSignals.filter(sg => sg.stopLoss || sg.targetPrice).forEach(sg => {
+      const price = livePrices[sg.instrument]?.price;
+      if (!price) return;
+      const isLong = sg.direction === "Long";
+      const tpHit = sg.targetPrice && (isLong ? price >= Number(sg.targetPrice) : price <= Number(sg.targetPrice));
+      const slHit = sg.stopLoss && (isLong ? price <= Number(sg.stopLoss) : price >= Number(sg.stopLoss));
+      if (!tpHit && !slHit) return;
+      const result = tpHit ? "WIN" : "LOSS";
+      fetch(`/api/signals/${sg.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "CLOSED", exitPrice: price, result }),
+      }).then(() => { onSignalClosed?.(); }).catch(() => {});
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [livePrices]);
+
   const handleTimeframeChange = (tf) => {
     setTimeframe(tf);
+    try { localStorage.setItem("chart_tf", tf.label); } catch {}
     load(tf);
   };
 
@@ -1108,14 +1105,36 @@ Provide: 1) Market context (2 sentences), 2) Key risk factors, 3) Recommended ac
   });
 
   return (
-    <div style={{ display: "flex", flex: 1, minHeight: 0, background: C.bg, color: C.text, fontFamily: "var(--font-maven-pro), sans-serif", overflow: "hidden" }}>
+    <div className="ti-wrap" style={{ display: "flex", flex: 1, minHeight: 0, background: C.bg, color: C.text, fontFamily: "var(--font-geist-mono), monospace", overflow: "hidden" }}>
+      <style>{`
+        @media(max-width:900px){
+          .ti-wrap{flex-direction:column!important;height:100%!important;overflow:hidden!important}
+          /* Instrument bar — horizontal scroll strip */
+          .ti-left{width:100%!important;height:auto!important;flex-direction:row!important;border-right:none!important;border-bottom:1px solid #1e2d45!important;flex-shrink:0!important;overflow:hidden!important}
+          .ti-left-inner{display:flex!important;flex-direction:row!important;overflow-x:auto!important;padding:6px 8px!important;gap:5px!important;scrollbar-width:none!important;-webkit-overflow-scrolling:touch!important}
+          .ti-left-header,.ti-left-footer{display:none!important}
+          /* Chart takes 50% of remaining height */
+          .ti-center{flex:1!important;min-height:220px!important;overflow:hidden!important}
+          /* Analysis panel — scrollable below chart */
+          .ti-right{width:100%!important;border-left:none!important;border-top:1px solid #1e2d45!important;height:45vh!important;min-height:260px!important;flex-shrink:0!important;overflow:hidden!important}
+          /* Compact timeframe bar */
+          .tf-bar{overflow-x:auto!important;scrollbar-width:none!important}
+          .tf-bar button{padding:3px 5px!important;font-size:9px!important}
+          /* InstrumentItem in horizontal mode */
+          .ti-left-inner button{min-width:90px!important;flex-shrink:0!important;padding:6px 8px!important}
+        }
+        @media(max-width:480px){
+          .ti-right{height:50vh!important}
+          .ti-center{min-height:180px!important}
+        }
+      `}</style>
 
       {/* ── Left Sidebar ── */}
-      <div style={{ width: 196, flexShrink: 0, background: C.bg2, borderRight: `1px solid ${C.border}`, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-        <div style={{ padding: "10px 12px 8px", borderBottom: `1px solid ${C.border}` }}>
+      <div className="ti-left" style={{ width: 196, flexShrink: 0, background: C.bg2, borderRight: `1px solid ${C.border}`, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        <div className="ti-left-header" style={{ padding: "10px 12px 8px", borderBottom: `1px solid ${C.border}` }}>
           <div style={{ fontSize: 9, fontWeight: 600, color: C.textD, textTransform: "uppercase", letterSpacing: "0.6px" }}>Instruments</div>
         </div>
-        <div style={{ flex: 1, overflowY: "auto", padding: "6px 8px" }}>
+        <div className="ti-left-inner" style={{ flex: 1, overflowY: "auto", padding: "6px 8px" }}>
           {loading
             ? Array.from({ length: 5 }).map((_, i) => (
                 <div key={i} style={{ height: 60, borderRadius: 8, background: C.bg3, marginBottom: 4, opacity: 0.5 }} />
@@ -1127,12 +1146,12 @@ Provide: 1) Market context (2 sentences), 2) Key risk factors, 3) Recommended ac
                   livePrice={livePrices[k]}
                   scoring={instruments[k] ? scoreInstrument(instruments[k]) : { score: 0, direction: "—" }}
                   selected={selected === k}
-                  onClick={(key) => { setSelected(key); setActiveTab("verdict"); }}
+                  onClick={(key) => { setSelected(key); setActiveTab("signal"); }}
                 />
               ))
           }
         </div>
-        <div style={{ padding: "8px 10px", borderTop: `1px solid ${C.border}` }}>
+        <div className="ti-left-footer" style={{ padding: "8px 10px", borderTop: `1px solid ${C.border}` }}>
           {/* Auto-refresh status — no manual button needed */}
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
@@ -1152,45 +1171,38 @@ Provide: 1) Market context (2 sentences), 2) Key risk factors, 3) Recommended ac
       </div>
 
       {/* ── Center Panel ── */}
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
+      <div className="ti-center" style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
 
-        {/* Center header */}
-        <div style={{ padding: "10px 14px", borderBottom: `1px solid ${C.border}`, background: C.bg2, display: "flex", alignItems: "center", gap: 12, flexShrink: 0, flexWrap: "wrap" }}>
-          <div>
-            <div style={{ fontSize: 15, fontWeight: 800, letterSpacing: -0.3 }}>{INSTRUMENTS[selected]?.label}</div>
-            <div style={{ fontSize: 9, color: C.textD }}>{INSTRUMENTS[selected]?.sub}</div>
+        {/* Center header — single unified row */}
+        <div style={{ padding: "8px 14px", borderBottom: `1px solid ${C.border}`, background: C.bg2, display: "flex", alignItems: "center", gap: 10, flexShrink: 0, flexWrap: "nowrap", overflow: "hidden" }}>
+          {/* Instrument + price */}
+          <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexShrink: 0 }}>
+            <span style={{ fontSize: 13, fontWeight: 800, letterSpacing: -0.3 }}>{INSTRUMENTS[selected]?.label}</span>
+            {(() => {
+              const lp = livePrices[selected];
+              const displayPrice = lp?.price ?? selectedData.current;
+              const displayChange = lp?.change ?? selectedData.change;
+              const up = (displayChange ?? 0) >= 0;
+              if (!displayPrice) return null;
+              return (
+                <>
+                  <span style={{ fontSize: 15, fontWeight: 800, fontFamily: "var(--font-geist-mono), monospace", color: C.text }}>{fmtPrice(selected, displayPrice)}</span>
+                  <span style={{ fontSize: 10, color: up ? C.green : C.red, display: "flex", alignItems: "center", gap: 1, fontWeight: 600 }}>
+                    {up ? <ArrowUpRight size={9}/> : <ArrowDownRight size={9}/>}{fmtPct(displayChange)}
+                  </span>
+                  {lp && <span style={{ fontSize: 8, color: C.green, fontWeight: 700 }}>● LIVE</span>}
+                </>
+              );
+            })()}
           </div>
-          {(livePrices[selected]?.price || selectedData.current) && (() => {
-            const lp = livePrices[selected];
-            const displayPrice = lp?.price ?? selectedData.current;
-            const displayChange = lp?.change ?? selectedData.change;
-            const up = (displayChange ?? 0) >= 0;
-            return (
-              <div>
-                <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "monospace" }}>{fmtPrice(selected, displayPrice)}</div>
-                <div style={{ fontSize: 10, color: up ? C.green : C.red, display: "flex", alignItems: "center", gap: 2 }}>
-                  {up ? <ArrowUpRight size={10}/> : <ArrowDownRight size={10}/>}{fmtPct(displayChange)}
-                  {lp && <span style={{ fontSize: 8, color: C.green, marginLeft: 4, fontWeight: 600 }}>● LIVE</span>}
-                </div>
-              </div>
-            );
-          })()}
 
-          {/* Chart type toggle */}
-          <div style={{ display: "flex", gap: 2, background: C.bg3, borderRadius: 6, padding: 2, border: `1px solid ${C.border}` }}>
-            {[["candle", "Candles"], ["area", "Area"]].map(([t, lbl]) => (
-              <button key={t} onClick={() => setChartType(t)}
-                style={{ padding: "4px 10px", borderRadius: 4, fontSize: 10, fontWeight: 600, background: chartType === t ? C.purple : "transparent", color: chartType === t ? "#fff" : C.textM, border: "none", cursor: "pointer", transition: "all 0.2s" }}>
-                {lbl}
-              </button>
-            ))}
-          </div>
+          <div style={{ width: 1, height: 16, background: C.border, flexShrink: 0 }} />
 
           {/* Timeframe selector */}
-          <div style={{ display: "flex", gap: 2, background: C.bg3, borderRadius: 6, padding: 2, border: `1px solid ${C.border}` }}>
+          <div className="tf-bar" style={{ display: "flex", gap: 2, background: C.bg3, borderRadius: 6, padding: 2, border: `1px solid ${C.border}`, flexShrink: 0 }}>
             {TIMEFRAMES.map(tf => (
               <button key={tf.label} onClick={() => handleTimeframeChange(tf)}
-                style={{ padding: "4px 8px", borderRadius: 4, fontSize: 10, fontWeight: 700, background: timeframe.label === tf.label ? C.purple : "transparent", color: timeframe.label === tf.label ? "#fff" : C.textM, border: "none", cursor: "pointer", transition: "all 0.2s", position: "relative" }}>
+                style={{ padding: "3px 7px", borderRadius: 4, fontSize: 10, fontWeight: 700, background: timeframe.label === tf.label ? C.purple : "transparent", color: timeframe.label === tf.label ? "#fff" : C.textM, border: "none", cursor: "pointer", transition: "all 0.2s", position: "relative" }}>
                 {tf.label}
                 {tfLoading && timeframe.label === tf.label && (
                   <span style={{ position: "absolute", top: -2, right: -2, width: 5, height: 5, borderRadius: "50%", background: C.cyan }} />
@@ -1199,40 +1211,48 @@ Provide: 1) Market context (2 sentences), 2) Key risk factors, 3) Recommended ac
             ))}
           </div>
 
-          {/* Signal badge */}
-          {selectedData.signal && (
-            <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
-              <span style={{ padding: "3px 8px", borderRadius: 4, fontSize: 10, fontWeight: 700, background: selectedData.signal.direction === "BUY" ? C.greenBg : C.redBg, color: selectedData.signal.direction === "BUY" ? C.green : C.red, border: `1px solid ${selectedData.signal.direction === "BUY" ? C.greenBd : C.redBd}` }}>
-                {selectedData.signal.direction}
-              </span>
-              <span style={{ padding: "3px 8px", borderRadius: 4, fontSize: 10, fontWeight: 600, background: C.bg3, color: C.amber, border: `1px solid ${C.border}` }}>
-                {selectedData.signal.confidence}% conf
-              </span>
-            </div>
-          )}
-        </div>
+          {/* Active signals inline */}
+          {(() => {
+            const sigs = (openSignals || []).filter(s => s.instrument === selected);
+            if (!sigs.length) return null;
+            return (
+              <>
+                <div style={{ width: 1, height: 16, background: C.border, flexShrink: 0 }} />
+                <div style={{ display: "flex", gap: 6, alignItems: "center", overflow: "hidden", flex: 1, minWidth: 0 }}>
+                  <span style={{ fontSize: 9, fontWeight: 700, color: C.purple, textTransform: "uppercase", letterSpacing: 0.8, flexShrink: 0 }}>{sigs.length}×</span>
+                  {sigs.map(sig => {
+                    const isLong = sig.direction === "Long";
+                    const dirColor = isLong ? C.green : C.red;
+                    return (
+                      <div key={sig.id} style={{ display: "flex", alignItems: "center", gap: 5, padding: "3px 8px", borderRadius: 6, background: C.bg3, border: `1px solid ${C.border}`, flexShrink: 0, fontSize: 10, fontFamily: "monospace" }}>
+                        <span style={{ width: 5, height: 5, borderRadius: "50%", background: dirColor, flexShrink: 0 }} />
+                        <span style={{ fontWeight: 700, color: dirColor }}>{isLong ? "▲" : "▼"} {sig.direction.toUpperCase()}</span>
+                        <span style={{ color: C.textD }}>E</span><strong style={{ color: C.text }}>{sig.entryPrice}</strong>
+                        {sig.targetPrice && <><span style={{ color: C.green }}>TP</span><strong style={{ color: C.green }}>{sig.targetPrice}</strong></>}
+                        {sig.stopLoss && <><span style={{ color: C.red }}>SL</span><strong style={{ color: C.red }}>{sig.stopLoss}</strong></>}
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            );
+          })()}
 
-        {/* Chart legend bar */}
-        <div style={{ padding: "4px 14px", background: "rgba(0,0,0,0.2)", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 14, flexShrink: 0, flexWrap: "wrap" }}>
-          <span style={{ fontSize: 9, color: C.textD, display: "flex", alignItems: "center", gap: 4 }}>
-            <span style={{ display: "inline-block", width: 20, height: 2, background: C.amber, verticalAlign: "middle" }} /> SMA20
-          </span>
-          <span style={{ fontSize: 9, color: C.textD, display: "flex", alignItems: "center", gap: 4 }}>
-            <span style={{ display: "inline-block", width: 20, height: 2, background: C.purple, verticalAlign: "middle" }} /> SMA50
-          </span>
-          <span style={{ fontSize: 9, color: C.textD, display: "flex", alignItems: "center", gap: 4 }}>
-            <span style={{ display: "inline-block", width: 20, height: 2, background: C.cyan, verticalAlign: "middle" }} /> WVPPP
-          </span>
-          {selectedData.signal && <>
-            <span style={{ fontSize: 9, color: C.cyan }}>╌ Entry</span>
-            <span style={{ fontSize: 9, color: C.red }}>— SL</span>
-            <span style={{ fontSize: 9, color: C.green }}>· TP1/2/3</span>
-          </>}
-          <span style={{ fontSize: 9, color: C.green }}>╌ S1-3</span>
-          <span style={{ fontSize: 9, color: C.red }}>╌ R1-3</span>
-          <span style={{ fontSize: 9, color: C.green, display: "flex", alignItems: "center", gap: 3 }}>↑ RSI Bull Div</span>
-          <span style={{ fontSize: 9, color: C.red, display: "flex", alignItems: "center", gap: 3 }}>↓ RSI Bear Div</span>
-          <span style={{ fontSize: 9, color: C.textD, marginLeft: "auto" }}>Vol below · divergence arrows on bars</span>
+          {/* Signal verdict pill */}
+          {(() => {
+            const sc = scoring;
+            const col = sc.direction === "BUY" ? C.green : sc.direction === "SELL" ? C.red : C.amber;
+            const bg  = sc.direction === "BUY" ? C.greenBg : sc.direction === "SELL" ? C.redBg : C.amberBg;
+            const bd  = sc.direction === "BUY" ? C.greenBd : sc.direction === "SELL" ? C.redBd : C.amberBd;
+            return (
+              <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+                <span style={{ padding: "3px 10px", borderRadius: 6, fontSize: 11, fontWeight: 800, background: bg, color: col, border: `1px solid ${bd}`, letterSpacing: 0.5 }}>
+                  {sc.direction}
+                </span>
+                <span style={{ fontSize: 10, color: C.textD, fontWeight: 600 }}>{sc.score}/100</span>
+              </div>
+            );
+          })()}
         </div>
 
         {/* Chart + Cards (scrollable below chart) */}
@@ -1250,15 +1270,12 @@ Provide: 1) Market context (2 sentences), 2) Key risk factors, 3) Recommended ac
               {/* Chart fills available space */}
               <UnifiedChart
                 instrumentKey={selected}
-                data={selectedData}
-                news={news}
-                chartType={chartType}
-                onChartTypeChange={setChartType}
+                tfLabel={timeframe.label}
               />
 
               {/* Cards below chart — scrollable strip */}
               <div style={{ flexShrink: 0, padding: "10px 14px", borderTop: `1px solid ${C.border}`, background: C.bg2, display: "flex", flexDirection: "column", gap: 8 }}>
-                <AnalysisCards data={selectedData} instrumentKey={selected} />
+                <AnalysisCards data={selectedData} instrumentKey={selected} scoring={scoring} />
                 <KeyLevels data={{ support: selectedData.support || [], resistance: selectedData.resistance || [] }} instrumentKey={selected} />
               </div>
             </>
@@ -1267,12 +1284,12 @@ Provide: 1) Market context (2 sentences), 2) Key risk factors, 3) Recommended ac
       </div>
 
       {/* ── Right Panel ── */}
-      <div style={{ width: 290, flexShrink: 0, background: C.bg2, borderLeft: `1px solid ${C.border}`, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+      <div className="ti-right" style={{ width: 290, flexShrink: 0, background: C.bg2, borderLeft: `1px solid ${C.border}`, display: "flex", flexDirection: "column", overflow: "hidden" }}>
         <div style={{ display: "flex", borderBottom: `1px solid ${C.border}`, padding: "3px 6px 0", flexShrink: 0 }}>
           {[
-            { id: "verdict", label: "Verdict", icon: <Zap size={10}/> },
-            { id: "breakdown", label: "Analysis", icon: <BarChart2 size={10}/> },
-            { id: "news", label: "News", icon: <Newspaper size={10}/> },
+            { id: "signal",   label: `Signal${(openSignals||[]).filter(s=>s.instrument===selected).length ? ` (${(openSignals||[]).filter(s=>s.instrument===selected).length})` : ""}`, icon: <Zap size={10}/> },
+            { id: "analysis", label: "Analysis", icon: <BarChart2 size={10}/> },
+            { id: "news",     label: "News",     icon: <Newspaper size={10}/> },
           ].map(t => (
             <button key={t.id} onClick={() => setActiveTab(t.id)} style={tabStyle(t.id)}>
               <span style={{ display: "flex", alignItems: "center", gap: 4 }}>{t.icon}{t.label}</span>
@@ -1284,17 +1301,31 @@ Provide: 1) Market context (2 sentences), 2) Key risk factors, 3) Recommended ac
             Array.from({ length: 4 }).map((_, i) => (
               <div key={i} style={{ height: 60 + i * 8, borderRadius: 8, background: C.bg3, marginBottom: 8, opacity: 0.5 }} />
             ))
-          ) : activeTab === "verdict" ? (
-            <VerdictPanel
-              instrumentKey={selected}
-              data={selectedData}
-              scoring={scoring}
-              aiResult={aiResults[selected]}
-              aiLoading={aiLoading}
-              onAiAnalyze={handleAiAnalyze}
-            />
-          ) : activeTab === "breakdown" ? (
-            <BreakdownPanel data={selectedData} instrumentKey={selected} scoring={scoring} />
+          ) : activeTab === "signal" ? (
+            <>
+              <VerdictPanel
+                instrumentKey={selected}
+                data={selectedData}
+                scoring={scoring}
+                aiResult={aiResults[selected]}
+                aiLoading={aiLoading}
+                onAiAnalyze={handleAiAnalyze}
+              />
+              {(openSignals||[]).filter(s=>s.instrument===selected).length > 0 && (
+                <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${C.border}` }}>
+                  <div style={{ fontSize: 9, fontWeight: 700, color: C.textD, textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 8 }}>Active Signals</div>
+                  <SignalPanel openSignals={openSignals} instrumentKey={selected} liveData={Object.keys(livePrices).length ? livePrices : externalLiveData} />
+                </div>
+              )}
+            </>
+          ) : activeTab === "analysis" ? (
+            <>
+              <BreakdownPanel data={selectedData} instrumentKey={selected} scoring={scoring} />
+              <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${C.border}` }}>
+                <div style={{ fontSize: 9, fontWeight: 700, color: C.textD, textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 8 }}>SMC Structure</div>
+                <SMCPanel data={selectedData} instrumentKey={selected} />
+              </div>
+            </>
           ) : (
             <NewsPanel news={news} instrumentKey={selected} />
           )}

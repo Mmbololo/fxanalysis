@@ -1,13 +1,14 @@
 "use client";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { signOut, useSession } from "next-auth/react";
 import Link from "next/link";
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Area, AreaChart, ComposedChart, Cell } from "recharts";
-import { TrendingUp, TrendingDown, Activity, BarChart3, Brain, BookOpen, RefreshCw, AlertTriangle, Target, Shield, Zap, Plus, Trash2, ArrowUpRight, ArrowDownRight, Clock, Database, Crosshair, Layers, Radio, ExternalLink, LogOut, User } from "lucide-react";
+import { TrendingUp, TrendingDown, Activity, BarChart3, Brain, BookOpen, RefreshCw, AlertTriangle, Target, Shield, Zap, Plus, Trash2, ArrowUpRight, ArrowDownRight, Clock, Database, Crosshair, Layers, Radio, ExternalLink, LogOut, User, Menu, X } from "lucide-react";
 import ChatAssistant from "./chat-assistant";
 import AdvancedChart from "./AdvancedChart";
 import TradePanel from "./TradePanel";
 import TradingIntelligence from "./TradingIntelligence";
+import { TVCalendar, TVTechnicalAnalysis } from "./TradingViewWidgets";
 
 
 const T = {
@@ -384,15 +385,35 @@ const MetricCard = ({ label, value, sub, subColor, icon: Icon }) => (
   </div>
 );
 
-const VIEWS = ["overview", "intelligence", "marketintel", "tradelab"];
+const VIEWS = ["overview", "intelligence", "intel-hub", "calendar", "tradelab"];
 const VIEW_LABELS = {
-  overview: "Overview", intelligence: "Chart Terminal", marketintel: "Market Intel",
+  overview: "Overview",
+  intelligence: "Chart Terminal",
+  "intel-hub": "Intelligence Hub",
+  calendar: "Economic Calendar",
   tradelab: "Trade Lab",
 };
 const VIEW_ICONS = {
-  overview: Activity, intelligence: Crosshair, marketintel: Brain,
+  overview: Activity,
+  intelligence: Crosshair,
+  "intel-hub": Brain,
+  calendar: Clock,
   tradelab: Zap,
 };
+
+// ── Economic Calendar ─────────────────────────────────────────────────
+function EconomicCalendar() {
+  return (
+    <div className="cal-wrap" style={{ maxWidth: 1000, margin: "0 auto", padding: "0 4px", height: "calc(100vh - 200px)" }}>
+      <div style={{ marginBottom: 16 }}>
+        <div style={{ fontSize: 18, fontWeight: 700, color: T.text, fontFamily: "var(--font-geist-mono), monospace" }}>Economic Calendar</div>
+        <div style={{ fontSize: 12, color: T.textD, marginTop: 2, fontFamily: "var(--font-geist-mono), monospace" }}>Real-time global macro events · Powered by TradingView</div>
+      </div>
+      <TVCalendar height="calc(100% - 56px)" />
+    </div>
+  );
+}
+
 
 export default function TradingDashboard() {
   if (typeof window !== "undefined" && !window.storage) {
@@ -401,7 +422,7 @@ export default function TradingDashboard() {
       set: async (k, v) => localStorage.setItem(k, v)
     };
   }
-  const [view, setView] = useState("intelligence");
+  const [view, setView] = useState("overview");
   const [sel, setSel] = useState("XAUUSD");
   const [intelData, setIntelData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -426,11 +447,11 @@ export default function TradingDashboard() {
   const [optData, setOptData] = useState(null);
   const [optLoading, setOptLoading] = useState(false);
   const [liveData, setLiveData] = useState({});
-  const [livePulse, setLivePulse] = useState(false);
   const [cotLive, setCotLive] = useState(null);
   const [cotLoading, setCotLoading] = useState(false);
-  const [posTab, setPosTab] = useState("overview");
+  const [posTab, setPosTab] = useState("signal");
   const [labTab, setLabTab] = useState("scanner");
+  const [menuOpen, setMenuOpen] = useState(false);
 
 
   const fetchPrices = useCallback(async () => {
@@ -439,37 +460,97 @@ export default function TradingDashboard() {
       const json = await res.json();
       if (json.data) {
         setLiveData(json.data);
-        setLivePulse(p => !p);
       }
     } catch {}
   }, []);
 
   useEffect(() => {
     fetchPrices();
-    const id = setInterval(fetchPrices, 15000);
+    const id = setInterval(fetchPrices, 3000);
     return () => clearInterval(id);
   }, [fetchPrices]);
 
-  // Fetch intelligence data lazily (used by AI tools + overview)
-  useEffect(() => {
-    if (!intelData) {
-      fetch("/api/intelligence")
-        .then(r => r.json())
-        .then(data => setIntelData(data))
-        .catch(() => {});
-    }
-  }, [intelData]);
+  const fetchIntelligence = useCallback(async () => {
+    try {
+      const r = await fetch("/api/intelligence");
+      const data = await r.json();
+      setIntelData(data);
 
-  // Fetch live COT data when Market Intel view is opened
+      // Process RSI Alerts from the master data stream
+      if (data.instruments) {
+        const newAlerts = [];
+        Object.entries(data.instruments).forEach(([key, inst]) => {
+          if (inst.rsiDivergence) {
+            newAlerts.push({
+              instrument: key,
+              timeframe: data.interval === "1d" ? "D" : data.interval,
+              type: inst.rsiDivergence.type,
+              msg: inst.rsiDivergence.msg,
+              timestamp: Date.now()
+            });
+          }
+        });
+
+        if (newAlerts.length > 0) {
+          setRsiAlerts(prev => {
+            // Only add if not already in the last 5 alerts for this instrument/type
+            const filtered = newAlerts.filter(na => 
+              !prev.some(pa => pa.instrument === na.instrument && pa.type === na.type && (Date.now() - pa.timestamp < 300000))
+            );
+            return [...filtered, ...prev].slice(0, 10);
+          });
+        }
+      }
+    } catch {}
+  }, []);
+
   useEffect(() => {
-    if (view === "marketintel" && !cotLive && !cotLoading) {
+    fetchIntelligence();
+    const id = setInterval(fetchIntelligence, 30000);
+    return () => clearInterval(id);
+  }, [fetchIntelligence]);
+
+  const [rsiAlerts, setRsiAlerts] = useState([]);
+  const [sigToasts, setSigToasts] = useState([]);
+  const [mtfRsi, setMtfRsi] = useState({});
+
+  const fetchMtfRsi = useCallback(async () => {
+    try {
+      const [r15, r1h, r4h] = await Promise.all([
+        fetch("/api/intelligence?interval=15m&range=5d"),
+        fetch("/api/intelligence?interval=60m&range=1mo"),
+        fetch("/api/intelligence?interval=60m&range=3mo"),
+      ]);
+      const [d15, d1h, d4h] = await Promise.all([r15.json(), r1h.json(), r4h.json()]);
+      const keys = ["XAUUSD", "GBPUSD", "GBPJPY", "BTCUSD", "EURUSD"];
+      const mtf = {};
+      for (const k of keys) {
+        mtf[k] = {
+          "15M": d15?.instruments?.[k]?.rsi ?? null,
+          "1H":  d1h?.instruments?.[k]?.rsi ?? null,
+          "4H":  d4h?.instruments?.[k]?.rsi ?? null,
+        };
+      }
+      setMtfRsi(mtf);
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    fetchMtfRsi();
+    const id = setInterval(fetchMtfRsi, 10 * 60 * 1000);
+    return () => clearInterval(id);
+  }, [fetchMtfRsi]);
+
+  // Fetch live COT data on mount and when Intel Hub is opened
+  useEffect(() => {
+    if (!cotLive && !cotLoading) {
       setCotLoading(true);
       fetch("/api/cot")
         .then(r => r.json())
         .then(data => { setCotLive(data); setCotLoading(false); })
         .catch(() => setCotLoading(false));
     }
-  }, [view, cotLive, cotLoading]);
+  }, [cotLive, cotLoading]);
 
 
   useEffect(() => {
@@ -604,14 +685,114 @@ Return ONLY valid JSON (no markdown):
     setSignalsLoading(false);
   };
 
-  const closeSignal = async (id, exitPrice) => {
+  const closingRef = useRef(new Set());
+
+  const closeSignal = async (id, exitPrice, result) => {
     try {
-      const res = await fetch(`/api/signals/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "CLOSED", exitPrice }) });
+      const res = await fetch(`/api/signals/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "CLOSED", exitPrice, result: result || null }) });
       const json = await res.json();
       if (json.signal) setSignals(prev => prev.map(s => s.id === id ? json.signal : s));
     } catch {}
     setCloseForm(null);
   };
+
+  // Auto-close: fires whenever liveData OR signals changes — no stale closure
+  useEffect(() => {
+    if (!liveData || Object.keys(liveData).length === 0) return;
+    signals.filter(sg => sg.status === "OPEN" && !closingRef.current.has(sg.id)).forEach(sg => {
+      const price = liveData[sg.instrument]?.price;
+      if (!price) return;
+      const isLong = sg.direction === "Long";
+      const tpHit = sg.targetPrice && (isLong ? price >= Number(sg.targetPrice) : price <= Number(sg.targetPrice));
+      const slHit = sg.stopLoss  && (isLong ? price <= Number(sg.stopLoss)  : price >= Number(sg.stopLoss));
+      if (!tpHit && !slHit) return;
+      closingRef.current.add(sg.id);
+      const result = tpHit ? "WIN" : "LOSS";
+      fetch(`/api/signals/${sg.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "CLOSED", exitPrice: price, result }),
+      }).then(r => {
+        if (!r.ok) { closingRef.current.delete(sg.id); fetchSignals(); return null; }
+        return r.json();
+      }).then(data => {
+        if (!data) return;
+        if (data.signal) setSignals(prev => prev.map(s => s.id === sg.id ? data.signal : s));
+        else fetchSignals();
+        const toast = { id: sg.id + Date.now(), instrument: sg.instrument, direction: sg.direction, result, price, ts: Date.now() };
+        setSigToasts(prev => [toast, ...prev.slice(0, 4)]);
+        setTimeout(() => setSigToasts(prev => prev.filter(t => t.id !== toast.id)), 6000);
+      }).catch(() => { closingRef.current.delete(sg.id); });
+    });
+  }, [liveData, signals, fetchSignals]);
+
+  // ── Signal auto-generator ─────────────────────────────────────────────────
+  const [autoGenLoading, setAutoGenLoading] = useState(false);
+  const [lastAutoGen, setLastAutoGen] = useState(null);
+  const [notifPermission, setNotifPermission] = useState(
+    typeof Notification !== "undefined" ? Notification.permission : "default"
+  );
+
+  // Request notification permission on mount
+  useEffect(() => {
+    if (typeof Notification !== "undefined" && Notification.permission === "default") {
+      Notification.requestPermission().then(p => setNotifPermission(p));
+    }
+  }, []);
+
+  const sendNotification = (title, body, tag) => {
+    if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
+    try { new Notification(title, { body, tag, icon: "/favicon.ico", requireInteraction: false }); } catch {}
+  };
+
+  const generateASetups = useCallback(async (silent = false) => {
+    if (!silent) setAutoGenLoading(true);
+
+    // Build COT / sentiment / options payloads from static INSTRUMENTS data
+    const cot = {}, sentiment = {}, options = {};
+    for (const [key, inst] of Object.entries(INSTRUMENTS)) {
+      if (inst.cot) cot[key] = inst.cot;
+      if (inst.sentiment) sentiment[key] = inst.sentiment;
+      if (OPTIONS_OI.instruments[key]) options[key] = OPTIONS_OI.instruments[key];
+    }
+
+    try {
+      const res = await fetch("/api/signals/autogen", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ livePrices: liveData, cot, sentiment, options }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+
+      if (data.created?.length > 0) {
+        fetchSignals(); // refresh signal list
+        setLastAutoGen({ ts: Date.now(), created: data.created.map(s => s.instrument), errors: data.errors });
+
+        // Send browser notification for each new signal
+        data.created.forEach(sig => {
+          const pattern = sig.notes?.match(/\[AUTO\] ([^|]+)/)?.[1]?.trim() || "Signal";
+          sendNotification(
+            `📊 New ${sig.grade}-Grade Signal: ${sig.instrument}`,
+            `${sig.direction} | ${pattern} | Entry ${sig.entryPrice} | SL ${sig.stopLoss} | TP ${sig.targetPrice}`,
+            `signal-${sig.id}`
+          );
+        });
+      } else {
+        setLastAutoGen({ ts: Date.now(), created: [], errors: data.errors, skipped: data.skipped });
+      }
+    } catch (e) {
+      setLastAutoGen({ ts: Date.now(), created: [], errors: [e.message] });
+    }
+
+    if (!silent) setAutoGenLoading(false);
+  }, [liveData, fetchSignals]);
+
+  // Auto-scan every 10 minutes (silent, no loading spinner)
+  useEffect(() => {
+    const id = setInterval(() => generateASetups(true), 10 * 60 * 1000);
+    return () => clearInterval(id);
+  }, [generateASetups]);
 
   const deleteSignal = async (id) => {
     try {
@@ -620,9 +801,14 @@ Return ONLY valid JSON (no markdown):
     } catch {}
   };
 
+  const getLivePrice = (instrument) =>
+    liveData[instrument]?.price ?? liveInstruments[instrument]?.price ?? null;
+
   const calcPnL = (sig, livePrices) => {
-    const currentPrice = sig.status === "CLOSED" ? sig.exitPrice : (livePrices[sig.instrument]?.price || sig.entryPrice);
-    if (!currentPrice || !sig.entryPrice) return null;
+    const currentPrice = sig.status === "CLOSED"
+      ? sig.exitPrice
+      : (livePrices[sig.instrument]?.price ?? getLivePrice(sig.instrument));
+    if (!currentPrice || !sig.entryPrice || currentPrice === sig.entryPrice) return null;
     const raw = ((currentPrice - sig.entryPrice) / sig.entryPrice) * 100;
     return sig.direction === "Long" ? raw : -raw;
   };
@@ -636,20 +822,20 @@ Return ONLY valid JSON (no markdown):
   const inst = liveInstruments[sel];
   const isLive = Object.keys(liveData).length > 0;
   const s = {
-    root: { height: "100vh", display: "flex", flexDirection: "column", background: T.bg, color: T.text, fontFamily: "var(--font-maven-pro), sans-serif", overflow: "hidden" },
+    root: { height: "100vh", display: "flex", flexDirection: "column", background: T.bg, color: T.text, fontFamily: "var(--font-geist-mono), monospace", overflow: "hidden" },
     hdr: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px clamp(16px, 4vw, 24px)", borderBottom: `1px solid ${T.border}`, background: T.bg2, flexWrap: "wrap", gap: 10, flexShrink: 0 },
     nav: { display: "flex", gap: 2, padding: "0 clamp(16px, 4vw, 24px)", background: T.bg2, borderBottom: `1px solid ${T.border}`, overflowX: "auto", scrollbarWidth: "none", flexShrink: 0 },
     ni: a => ({ padding: "11px 14px", fontSize: 12, fontWeight: a ? 600 : 400, color: a ? T.accent : T.textM, cursor: "pointer", border: "none", background: "none", borderBottom: a ? `2px solid ${T.accent}` : "2px solid transparent", display: "flex", alignItems: "center", gap: 5, whiteSpace: "nowrap" }),
     ib: { display: "flex", gap: 6, padding: "12px 24px", flexWrap: "wrap" },
     ic: a => ({ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: 500, cursor: "pointer", border: `1px solid ${a ? T.accent : T.border}`, background: a ? T.purpleBg : T.bg2, color: a ? T.accent : T.textM }),
     mn: { padding: "clamp(12px, 3vw, 24px)", width: "100%", boxSizing: "border-box" },
-    g4: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 250px), 1fr))", gap: 12, marginBottom: 18 },
-    g2: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 450px), 1fr))", gap: 14, marginBottom: 18 },
+    g4: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 220px), 1fr))", gap: 12, marginBottom: 18 },
+    g2: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 400px), 1fr))", gap: 14, marginBottom: 18 },
     cd: { background: T.bg2, borderRadius: 12, padding: 18, border: `1px solid ${T.border}` },
     ct: { fontSize: 12, fontWeight: 600, color: T.textM, marginBottom: 14, textTransform: "uppercase", letterSpacing: 0.8, display: "flex", alignItems: "center", gap: 8 },
     tb: { width: "100%", borderCollapse: "collapse", fontSize: 12 },
     th: { textAlign: "left", color: T.textD, fontWeight: 400, padding: "5px 8px", fontSize: 11, borderBottom: `1px solid ${T.border}`, textTransform: "uppercase", letterSpacing: 0.4 },
-    td: { padding: "7px 8px", borderBottom: `1px solid ${T.border}`, fontFamily: "'JetBrains Mono', monospace", fontSize: 12 },
+    td: { padding: "7px 8px", borderBottom: `1px solid ${T.border}`, fontFamily: "var(--font-geist-mono), monospace", fontSize: 12 },
     sr: t => ({ display: "flex", alignItems: "flex-start", gap: 10, padding: "9px 13px", borderRadius: 8, background: SigBg(t), border: `1px solid ${SigBd(t)}`, marginBottom: 7, fontSize: 13, lineHeight: 1.5 }),
     btn: (bg, c) => ({ padding: "8px 16px", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer", background: bg, color: c, border: "none", display: "flex", alignItems: "center", gap: 6 }),
   };
@@ -658,95 +844,490 @@ Return ONLY valid JSON (no markdown):
 
   const priceStr = i => ["XAUUSD","BTCUSD"].includes(i.name) ? `$${i.price.toLocaleString()}` : i.price.toFixed(i.name === "GBPJPY" ? 2 : 4);
 
-  const renderCharts = () => {
-    if (!intelData || !intelData.instruments[sel]) return (
-      <div style={{ height: 500, display: "flex", alignItems: "center", justifyContent: "center", color: T.textD }}>
-        <RefreshCw size={24} style={{ animation: "spin 2s linear infinite", marginRight: 10 }} />
-        Synchronizing Chart Engine...
-      </div>
-    );
+  // ── Per-instrument master score helper (used by overview) ────────────
+  const computeInstrumentScore = (key) => {
+    const inst = liveInstruments[key];
+    const d = intelData?.instruments?.[key];
+    if (!inst) return { master: 50, dir: "WAIT", taScore: 50, smcScore: 50, cotScore: 50, tfLabel: "—", color: T.amber, conflicted: false };
 
-    return (
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 340px", gap: 24, width: "100%" }}>
-        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          <AdvancedChart 
-            instrumentKey={sel} 
-            data={intelData.instruments[sel]} 
-            news={intelData.news}
-          />
-          {/* Bottom stats row for charts view */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
-            {[
-              { label: "Trend", value: intelData.instruments[sel].trend, icon: <TrendingUp size={14}/>, color: T.purple },
-              { label: "RSI", value: intelData.instruments[sel].rsi, icon: <Activity size={14}/>, color: T.cyan },
-              { label: "ATR", value: intelData.instruments[sel].atr?.toFixed(4), icon: <Layers size={14}/>, color: T.textM },
-              { label: "Structure", value: intelData.instruments[sel].structure, icon: <Zap size={14}/>, color: T.amber },
-            ].map(s => (
-              <div key={s.label} style={{ background: T.bg2, padding: "12px 16px", borderRadius: 12, border: `1px solid ${T.border}`, display: "flex", alignItems: "center", gap: 10 }}>
-                <div style={{ color: s.color }}>{s.icon}</div>
-                <div>
-                  <div style={{ fontSize: 13, fontWeight: 800, color: s.color }}>{s.value}</div>
-                  <div style={{ fontSize: 9, color: T.textD, textTransform: "uppercase" }}>{s.label}</div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-        <div>
-          <TradePanel 
-            selectedInstrument={sel} 
-            instrumentData={intelData.instruments[sel]} 
-            onExecute={(data) => handleExecuteTrade({ ...data, instr: sel })}
-          />
-        </div>
-      </div>
-    );
+    const cotScore = (() => {
+      const net = inst.cot.netSpec;
+      if (!net) return 50;
+      if (net > 100000) return 74; if (net > 50000) return 62; if (net > 0) return 55;
+      if (net > -50000) return 44; if (net > -100000) return 36; return 25;
+    })();
+    const sentScore = 100 - inst.sentiment.retailLong;
+    const oo = OPTIONS_OI.instruments[key];
+    const pcrScore = oo?.putCallRatio != null ? Math.round(Math.max(10, Math.min(90, 50 + (1 - oo.putCallRatio) * 38))) : 50;
+
+    const livePrice = liveData[key]?.price;
+    const taScore = d ? (() => {
+      let s = 50;
+      if (d.trend === "BULLISH") s += 14; else if (d.trend === "BEARISH") s -= 14;
+      if (d.rsi > 55) s += 8; else if (d.rsi < 45) s -= 8;
+      if (d.rsi > 70) s -= 6; else if (d.rsi < 30) s += 6;
+      if (d.macd?.cross === "bullish") s += 10; else if (d.macd?.cross === "bearish") s -= 10;
+      else if (d.macd?.histogram > 0) s += 5; else if (d.macd?.histogram < 0) s -= 5;
+      if (d.structure === "BREAKOUT") s += 12; else if (d.structure === "BREAKDOWN") s -= 12;
+      else if (d.structure === "TRENDING") s += 6;
+      if (d.sma) {
+        const c = livePrice ?? d.current;
+        if (c) {
+          if (c > d.sma.sma20 && c > d.sma.sma50 && c > d.sma.sma200) s += 8;
+          else if (c < d.sma.sma20 && c < d.sma.sma50 && c < d.sma.sma200) s -= 8;
+        }
+      }
+      return Math.min(100, Math.max(0, Math.round(s)));
+    })() : 50;
+
+    const smcScore = d?.smc?.score ?? 50;
+    const taDir = taScore >= 58 ? "BULL" : taScore <= 42 ? "BEAR" : "NEUTRAL";
+    const smcDir = smcScore >= 58 ? "BULL" : smcScore <= 42 ? "BEAR" : "NEUTRAL";
+    const conflicted = taDir !== "NEUTRAL" && smcDir !== "NEUTRAL" && taDir !== smcDir;
+    const raw = Math.round(taScore*0.28 + smcScore*0.27 + cotScore*0.20 + sentScore*0.13 + pcrScore*0.12);
+    const master = conflicted ? Math.round(raw * 0.7 + 50 * 0.3) : raw;
+    const dir = master >= 58 ? "BUY" : master <= 42 ? "SELL" : "WAIT";
+    const color = dir === "BUY" ? T.green : dir === "SELL" ? T.red : T.amber;
+    const tfLabel = master >= 68 && !conflicted ? "4H" : master >= 58 && !conflicted ? "1H" : master >= 48 && !conflicted ? "15M" : "Wait";
+    return { master, dir, taScore, smcScore, cotScore, sentScore, pcrScore, tfLabel, color, conflicted, signal: d?.signal, trend: d?.trend, structure: d?.structure, rsi: d?.rsi, price: livePrice ?? d?.current ?? inst.price, change: liveData[key]?.change ?? d?.change ?? inst.change };
   };
 
-  const renderOverview = () => (<>
-    <div style={s.g4}>{Object.values(liveInstruments).map(i => (
-      <div key={i.name} onClick={() => { setSel(i.name); setView("cot"); }} style={{ ...s.cd, cursor: "pointer", borderColor: sel === i.name ? T.accent : T.border }}>
-        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}><span style={{ fontSize: 14, fontWeight: 700 }}>{i.name}</span><span style={{ fontSize: 11, color: T.textD }}>{i.label}</span></div>
-        <div style={{ fontSize: 22, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", marginBottom: 4 }}>{priceStr(i)}</div>
-        <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12, color: i.change > 0 ? T.green : T.red }}>{i.change > 0 ? <ArrowUpRight size={12}/> : <ArrowDownRight size={12}/>}{i.change > 0 ? "+" : ""}{i.change}%</div>
-        <div style={{ marginTop: 10, display: "flex", justifyContent: "space-between", fontSize: 11 }}><span style={{ color: T.textD }}>Composite</span><span style={{ color: i.compositeColor, fontWeight: 600 }}>{i.composite}</span></div>
-      </div>
-    ))}</div>
-    <div style={s.g2}>
-      <div style={s.cd}>
-        <div style={s.ct}><Crosshair size={14}/>Signal matrix</div>
-        <table style={s.tb}><thead><tr>{["Pair","COT","Retail","Contrarian","Signal"].map(h=><th key={h} style={s.th}>{h}</th>)}</tr></thead><tbody>
-          {Object.values(liveInstruments).map(i => { const net=i.cot.netSpec; const rl=i.sentiment.retailLong; return (
-            <tr key={i.name} style={{cursor:"pointer"}} onClick={()=>{setSel(i.name);setView("cot")}}>
-              <td style={{...s.td,fontWeight:600,color:T.text}}>{i.name}</td>
-              <td style={{...s.td,color:net>0?T.green:net<0?T.red:T.amber}}>{net>0?"Bullish":net<0?"Bearish":(i.cot.crossBias||"Mixed")}</td>
-              <td style={s.td}>{rl}%/{i.sentiment.retailShort}%</td>
-              <td style={{...s.td,color:rl>65?T.red:rl<35?T.green:T.amber}}>{rl>65?"Bearish":rl<35?"Bullish":"Neutral"}</td>
-              <td style={{...s.td,color:i.compositeColor,fontWeight:600}}>{i.composite}</td>
-            </tr>
-          );})}
-        </tbody></table>
-      </div>
-      <div style={s.cd}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}><div style={s.ct}><Layers size={14}/>FX option expiries today</div><div style={{fontSize:10,color:T.cyan,fontWeight:600}}>NY 10AM CUT</div></div>
-        <div style={{fontSize:11,color:T.textM,marginBottom:12,padding:"8px 12px",background:T.bg,borderRadius:8,borderLeft:`3px solid ${T.cyan}`,lineHeight:1.5}}>{OPTION_EXPIRIES.context}</div>
-        {OPTION_EXPIRIES.entries.map((e,i) => (
-          <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 12px",background:T.bg,borderRadius:8,marginBottom:6,border:`1px solid ${e.significance==="high"?T.cyanBd:T.border}`}}>
-            <div style={{minWidth:60}}><div style={{fontSize:12,fontWeight:700,color:T.cyan}}>{e.pair}</div><div style={{fontSize:10,color:T.textD}}>{e.notional}</div></div>
-            <div style={{flex:1}}>
-              <div style={{display:"flex",alignItems:"center",gap:6}}>
-                <span style={{fontSize:16,fontWeight:700,fontFamily:"'JetBrains Mono',monospace"}}>{e.strike}</span>
-                <span style={{fontSize:10,padding:"1px 6px",borderRadius:4,fontWeight:600,background:e.significance==="high"?T.cyanBg:T.amberBg,color:e.significance==="high"?T.cyan:T.amber}}>{e.significance}</span>
-              </div>
-              <div style={{fontSize:11,color:T.textD,marginTop:2}}>{e.techLevel}</div>
-            </div>
-            <Radio size={13} style={{color:e.significance==="high"?T.cyan:T.textD}}/>
+  const renderOverview = () => {
+    const allScores = Object.keys(liveInstruments).reduce((acc, k) => { acc[k] = computeInstrumentScore(k); return acc; }, {});
+    const activeSigs = Object.entries(allScores).filter(([, s]) => s.dir !== "WAIT" && s.signal);
+    const now = new Date();
+    const timeStr = now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", timeZoneName: "short" });
+
+    // ── Derived stats ──────────────────────────────────────────────────────────
+    const openSigsAll = signals.filter(s => s.status === "OPEN");
+    const closedSigsAll = signals.filter(s => s.status === "CLOSED");
+    const wins = closedSigsAll.filter(s => s.result === "WIN").length;
+    const losses = closedSigsAll.filter(s => s.result === "LOSS").length;
+    const winRate = closedSigsAll.length > 0 ? Math.round((wins / closedSigsAll.length) * 100) : null;
+    const sessionPnL = openSigsAll.reduce((acc, sg) => {
+      const cur = liveData[sg.instrument]?.price;
+      if (!cur || !sg.entryPrice) return acc;
+      const raw = ((cur - sg.entryPrice) / sg.entryPrice) * 100;
+      return acc + (sg.direction === "Long" ? raw : -raw);
+    }, 0);
+    const bullCount = Object.values(allScores).filter(s => s.dir === "BUY").length;
+    const bearCount = Object.values(allScores).filter(s => s.dir === "SELL").length;
+    const topSetup = Object.entries(allScores).filter(([, s]) => s.dir !== "WAIT").sort((a, b) => b[1].master - a[1].master)[0];
+
+    const fmtPrice = (key, v) => {
+      if (v == null) return "—";
+      if (key === "BTCUSD") return "$" + Math.round(v).toLocaleString();
+      if (v > 100) return v.toFixed(2);
+      return v.toFixed(5);
+    };
+
+    return (
+      <>
+        {/* ── Page header ─────────────────────────────────────────────────────── */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 24, flexWrap: "wrap", gap: 12 }}>
+          <div>
+            <div style={{ fontSize: 22, fontWeight: 900, color: T.text, letterSpacing: "-0.5px" }}>Market Overview</div>
+            <div style={{ fontSize: 11, color: T.textD, marginTop: 3 }}>Live intelligence · {timeStr} · {Object.keys(liveInstruments).length} instruments tracked</div>
           </div>
-        ))}
-        <div style={{marginTop:8,textAlign:"right"}}><button onClick={()=>setView("orderflow")} style={{...s.btn("transparent",T.cyan),fontSize:11,padding:"4px 10px"}}>Full order flow <ExternalLink size={11}/></button></div>
-      </div>
-    </div>
-  </>);
+          <div className="overview-actions" style={{ display: "flex", gap: 8 }}>
+            <button onClick={() => generateASetups(false)} disabled={autoGenLoading} style={{ ...s.btn(T.purpleBg, T.accent), fontSize: 11, border: `1px solid ${T.purpleBd}`, display: "flex", alignItems: "center", gap: 5 }}>
+              <Zap size={12} />{autoGenLoading ? "Scanning…" : "Scan Signals"}
+            </button>
+            <button onClick={() => setView("intelligence")} style={{ ...s.btn(T.bg3, T.cyan), fontSize: 11, display: "flex", alignItems: "center", gap: 5 }}><Crosshair size={12}/><span className="hdr-meta" style={{display:"flex"}}>Chart Terminal</span></button>
+            <button onClick={() => setView("intel-hub")} style={{ ...s.btn(T.bg3, T.text), fontSize: 11, display: "flex", alignItems: "center", gap: 5 }}><Brain size={12}/><span className="hdr-meta" style={{display:"flex"}}>Intel Hub</span></button>
+          </div>
+        </div>
+
+        {/* ── Session stat pills ───────────────────────────────────────────────── */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 10, marginBottom: 24 }}>
+          {[
+            {
+              label: "Session P&L", icon: <TrendingUp size={15} />,
+              value: openSigsAll.length ? `${sessionPnL >= 0 ? "+" : ""}${sessionPnL.toFixed(2)}%` : "—",
+              sub: `${openSigsAll.length} open position${openSigsAll.length !== 1 ? "s" : ""}`,
+              color: sessionPnL >= 0 ? T.green : T.red,
+            },
+            {
+              label: "Win Rate", icon: <Target size={15} />,
+              value: winRate != null ? `${winRate}%` : "—",
+              sub: `${wins}W / ${losses}L from ${closedSigsAll.length} closed`,
+              color: winRate >= 50 ? T.green : winRate != null ? T.red : T.textD,
+            },
+            {
+              label: "Market Bias", icon: <Activity size={15} />,
+              value: bullCount > bearCount ? `${bullCount} BULL` : bearCount > bullCount ? `${bearCount} BEAR` : "MIXED",
+              sub: `${bullCount} bull · ${bearCount} bear · ${5 - bullCount - bearCount} neutral`,
+              color: bullCount > bearCount ? T.green : bearCount > bullCount ? T.red : T.amber,
+            },
+            {
+              label: "Top Setup", icon: <Zap size={15} />,
+              value: topSetup ? topSetup[0] : "None",
+              sub: topSetup ? `${topSetup[1].dir} · Score ${topSetup[1].master}/100` : "No active signals",
+              color: topSetup ? topSetup[1].color : T.textD,
+            },
+            {
+              label: "Last Signal Scan", icon: <Radio size={15} />,
+              value: lastAutoGen ? (lastAutoGen.created.length > 0 ? `${lastAutoGen.created.length} fired` : "None") : "Not run",
+              sub: lastAutoGen ? new Date(lastAutoGen.ts).toLocaleTimeString() : "Click Scan Signals",
+              color: lastAutoGen?.created?.length > 0 ? T.green : T.textD,
+            },
+          ].map((stat, i) => (
+            <div key={i} style={{ background: T.bg2, borderRadius: 12, padding: "14px 16px", border: `1px solid ${T.border}`, position: "relative", overflow: "hidden" }}>
+              <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 2, background: `linear-gradient(90deg, ${stat.color}, transparent)` }} />
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                <div style={{ fontSize: 10, color: T.textD, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 8 }}>{stat.label}</div>
+                <div style={{ color: stat.color, opacity: 0.7 }}>{stat.icon}</div>
+              </div>
+              <div style={{ fontSize: 18, fontWeight: 800, color: stat.color, fontFamily: "'JetBrains Mono', monospace", letterSpacing: "-0.5px" }}>{stat.value}</div>
+              <div style={{ fontSize: 10, color: T.textD, marginTop: 5 }}>{stat.sub}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* ── Instrument cards ─────────────────────────────────────────────────── */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12, marginBottom: 24 }}>
+          {Object.keys(liveInstruments).map(key => {
+            const sc = allScores[key];
+            const inst = liveInstruments[key];
+            const isUp = (sc.change ?? 0) >= 0;
+            const price = fmtPrice(key, sc.price);
+            const isBuy = sc.dir === "BUY", isSell = sc.dir === "SELL";
+            const pillars = [
+              { l: "TA", v: sc.taScore }, { l: "SMC", v: sc.smcScore },
+              { l: "COT", v: sc.cotScore }, { l: "Sent", v: sc.sentScore },
+            ];
+
+            return (
+              <div key={key} onClick={() => { setSel(key); setView("intel-hub"); setPosTab("signal"); }}
+                style={{ background: T.bg2, borderRadius: 16, padding: "18px", border: `1px solid ${sel === key ? sc.color + "50" : T.border}`, cursor: "pointer", transition: "all 0.2s", position: "relative", overflow: "hidden" }}>
+
+                {/* Gradient glow top */}
+                <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: `linear-gradient(90deg, ${sc.color}cc, ${sc.color}22)`, borderRadius: "16px 16px 0 0" }} />
+                {/* Subtle bg gradient */}
+                <div style={{ position: "absolute", top: 0, right: 0, width: 80, height: 80, background: `radial-gradient(circle, ${sc.color}12, transparent 70%)`, pointerEvents: "none" }} />
+
+                {/* Header */}
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
+                  <div>
+                    <div style={{ fontSize: 14, fontWeight: 800, color: T.text, letterSpacing: "0.3px" }}>{key}</div>
+                    <div style={{ fontSize: 10, color: T.textD, marginTop: 1 }}>{inst.label}</div>
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
+                    <span style={{ fontSize: 10, fontWeight: 700, padding: "3px 9px", borderRadius: 6, background: isBuy ? T.greenBg : isSell ? T.redBg : T.amberBg, color: isBuy ? T.green : isSell ? T.red : T.amber, border: `1px solid ${isBuy ? T.greenBd : isSell ? T.redBd : T.amberBd}` }}>
+                      {sc.dir}
+                    </span>
+                    {sc.conflicted && <span style={{ fontSize: 8, color: T.amber, fontWeight: 700 }}>⚡ CONFLICT</span>}
+                  </div>
+                </div>
+
+                {/* Price */}
+                <div style={{ fontSize: 22, fontWeight: 800, fontFamily: "var(--font-geist-mono), monospace", color: T.text, letterSpacing: "-1px", marginBottom: 4 }}>{price}</div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+                  <div style={{ fontSize: 11, color: isUp ? T.green : T.red, display: "flex", alignItems: "center", gap: 3 }}>
+                    {isUp ? <ArrowUpRight size={12} /> : <ArrowDownRight size={12} />}
+                    {sc.change != null ? `${sc.change >= 0 ? "+" : ""}${sc.change.toFixed(2)}%` : "—"}
+                  </div>
+                  {inst.rsiDivergence && (
+                    <span style={{ fontSize: 8, fontWeight: 800, color: inst.rsiDivergence.type.includes("BULLISH") ? T.green : T.red, background: inst.rsiDivergence.type.includes("BULLISH") ? T.greenBg : T.redBg, padding: "2px 6px", borderRadius: 4, border: `1px solid ${inst.rsiDivergence.type.includes("BULLISH") ? T.greenBd : T.redBd}` }}>
+                      {inst.rsiDivergence.type.includes("BULLISH") ? "CONVERGENCE ↑" : "DIVERGENCE ↓"}
+                    </span>
+                  )}
+                </div>
+
+                {/* Master score */}
+                <div style={{ marginBottom: 12 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 5 }}>
+                    <span style={{ fontSize: 9, color: T.textD, textTransform: "uppercase", letterSpacing: 0.5 }}>Master Score</span>
+                    <span style={{ fontSize: 12, fontWeight: 800, color: sc.color }}>{sc.master}<span style={{ fontSize: 9, color: T.textD, fontWeight: 400 }}>/100</span></span>
+                  </div>
+                  <div style={{ height: 6, background: T.bg, borderRadius: 4, overflow: "hidden" }}>
+                    <div style={{ height: "100%", width: `${sc.master}%`, background: `linear-gradient(90deg, ${sc.color}99, ${sc.color})`, borderRadius: 4, transition: "width 0.8s ease" }} />
+                  </div>
+                </div>
+
+                {/* Pillar bars */}
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 5 }}>
+                  {pillars.map(p => {
+                    const c = p.v >= 58 ? T.green : p.v <= 42 ? T.red : T.amber;
+                    return (
+                      <div key={p.l} style={{ background: T.bg, borderRadius: 6, padding: "5px 7px" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
+                          <span style={{ fontSize: 8, color: T.textD, textTransform: "uppercase" }}>{p.l}</span>
+                          <span style={{ fontSize: 9, fontWeight: 700, color: c }}>{p.v}</span>
+                        </div>
+                        <div style={{ height: 3, background: T.bg2, borderRadius: 2, overflow: "hidden" }}>
+                          <div style={{ height: "100%", width: `${p.v}%`, background: c, borderRadius: 2 }} />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Best TF */}
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 10, paddingTop: 10, borderTop: `1px solid ${T.border}` }}>
+                  <span style={{ fontSize: 9, color: T.textD }}>Best entry TF</span>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: sc.tfLabel === "Wait" ? T.red : sc.color }}>{sc.tfLabel}</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* ── Active signals banner ────────────────────────────────────────────── */}
+        {activeSigs.length > 0 && (
+          <div style={{ marginBottom: 24, borderRadius: 16, overflow: "hidden", border: `1px solid ${T.purpleBd}`, background: T.bg2 }}>
+            <div style={{ background: `linear-gradient(135deg, ${T.bg3}, ${T.bg2})`, padding: "14px 20px", borderBottom: `1px solid ${T.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <div style={{ width: 8, height: 8, borderRadius: 4, background: T.green, boxShadow: `0 0 8px ${T.green}` }} />
+                <span style={{ fontSize: 13, fontWeight: 700, color: T.text }}>Active System Signals</span>
+                <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 20, background: T.purpleBg, color: T.accent, border: `1px solid ${T.purpleBd}`, fontWeight: 600 }}>{activeSigs.length} live</span>
+              </div>
+              <button onClick={() => setView("intel-hub")} style={{ fontSize: 10, color: T.textD, background: "none", border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}>
+                View all <ExternalLink size={10} />
+              </button>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 0 }}>
+              {activeSigs.map(([key, sc], idx) => {
+                const sig = sc.signal;
+                const isBuy = sc.dir === "BUY";
+                const liveP = liveData[key]?.price;
+                const pnlFromSig = liveP && sig?.entry ? ((liveP - sig.entry) / sig.entry * 100 * (isBuy ? 1 : -1)) : null;
+                return (
+                  <div key={key} onClick={() => { setSel(key); setView("intelligence"); }}
+                    style={{ padding: "16px 20px", borderRight: idx < activeSigs.length - 1 ? `1px solid ${T.border}` : "none", cursor: "pointer", transition: "background 0.15s" }}
+                    onMouseEnter={e => e.currentTarget.style.background = T.bg3}
+                    onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <span style={{ fontSize: 14, fontWeight: 800, color: T.text }}>{key}</span>
+                        <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 5, background: isBuy ? T.greenBg : T.redBg, color: isBuy ? T.green : T.red, border: `1px solid ${isBuy ? T.greenBd : T.redBd}` }}>{sig.direction}</span>
+                      </div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        {pnlFromSig != null && <span style={{ fontSize: 11, fontWeight: 700, color: pnlFromSig >= 0 ? T.green : T.red }}>{pnlFromSig >= 0 ? "+" : ""}{pnlFromSig.toFixed(2)}%</span>}
+                        <span style={{ fontSize: 9, color: T.amber, fontWeight: 700 }}>{sig.confidence}%</span>
+                      </div>
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6 }}>
+                      {[
+                        { l: "Entry", v: fmtPrice(key, sig.entry), c: T.cyan },
+                        { l: "Stop", v: fmtPrice(key, sig.sl), c: T.red },
+                        { l: "TP1", v: fmtPrice(key, sig.tp1), c: T.green },
+                        { l: "R:R", v: sig.rr, c: T.amber },
+                      ].map(r => (
+                        <div key={r.l} style={{ textAlign: "center", padding: "6px 4px", background: T.bg, borderRadius: 6 }}>
+                          <div style={{ fontSize: 8, color: T.textD, textTransform: "uppercase", marginBottom: 2 }}>{r.l}</div>
+                          <div style={{ fontSize: 11, fontWeight: 700, color: r.c, fontFamily: "monospace" }}>{r.v ?? "—"}</div>
+                        </div>
+                      ))}
+                    </div>
+                    <div style={{ marginTop: 8, fontSize: 9, color: T.textD }}>
+                      Score <span style={{ color: sc.color, fontWeight: 700 }}>{sc.master}/100</span>
+                      <span style={{ margin: "0 6px" }}>·</span>
+                      Best TF <span style={{ color: sc.color, fontWeight: 700 }}>{sc.tfLabel}</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* ── Intelligence Matrix ──────────────────────────────────────────────── */}
+        <div style={{ ...s.cd, marginBottom: 20 }}>
+          <div style={{ ...s.ct, marginBottom: 16 }}><Brain size={14} />Intelligence Matrix</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {/* Header */}
+            <div style={{ display: "grid", gridTemplateColumns: "140px 1fr 60px 60px 60px 60px 80px 70px 90px", gap: 8, padding: "0 8px", marginBottom: 4 }}>
+              {["Instrument", "Bias Bars", "TA", "SMC", "COT", "Sent", "Master", "TF", "Signal"].map(h => (
+                <div key={h} style={{ fontSize: 9, color: T.textD, textTransform: "uppercase", letterSpacing: 0.5, textAlign: h === "Bias Bars" ? "left" : "center" }}>{h}</div>
+              ))}
+            </div>
+            {Object.keys(liveInstruments).map(key => {
+              const sc = allScores[key];
+              const inst = liveInstruments[key];
+              const price = fmtPrice(key, sc.price);
+              const isUp = (sc.change ?? 0) >= 0;
+              const isBuy = sc.dir === "BUY", isSell = sc.dir === "SELL";
+              const pillars = [
+                { l: "TA", v: sc.taScore, c: sc.taScore >= 58 ? T.green : sc.taScore <= 42 ? T.red : T.amber },
+                { l: "SMC", v: sc.smcScore, c: sc.smcScore >= 58 ? T.green : sc.smcScore <= 42 ? T.red : T.amber },
+                { l: "COT", v: sc.cotScore, c: sc.cotScore >= 58 ? T.green : sc.cotScore <= 42 ? T.red : T.amber },
+                { l: "Sent", v: sc.sentScore, c: sc.sentScore >= 58 ? T.green : sc.sentScore <= 42 ? T.red : T.amber },
+              ];
+
+              return (
+                <div key={key} onClick={() => { setSel(key); setView("intel-hub"); setPosTab("signal"); }}
+                  style={{ display: "grid", gridTemplateColumns: "140px 1fr 60px 60px 60px 60px 80px 70px 90px", gap: 8, alignItems: "center", padding: "12px 8px", borderRadius: 10, cursor: "pointer", background: sel === key ? T.bg3 : T.bg, border: `1px solid ${sel === key ? T.borderL : "transparent"}`, transition: "all 0.15s" }}
+                  onMouseEnter={e => e.currentTarget.style.background = T.bg3}
+                  onMouseLeave={e => e.currentTarget.style.background = sel === key ? T.bg3 : T.bg}>
+                  {/* Instrument */}
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: T.text }}>{key}</div>
+                    <div style={{ fontSize: 11, fontFamily: "monospace", color: isUp ? T.green : T.red, marginTop: 1 }}>{price} <span style={{ fontSize: 9 }}>{sc.change != null ? `${sc.change >= 0 ? "+" : ""}${sc.change.toFixed(2)}%` : ""}</span></div>
+                  </div>
+                  {/* Visual bars */}
+                  <div style={{ display: "flex", gap: 3, alignItems: "center" }}>
+                    {pillars.map(p => (
+                      <div key={p.l} style={{ flex: 1, position: "relative" }}>
+                        <div style={{ height: 20, background: T.bg2, borderRadius: 4, overflow: "hidden", position: "relative" }}>
+                          <div style={{ position: "absolute", bottom: 0, left: 0, width: `${p.v}%`, height: "100%", background: `${p.c}33`, borderRadius: 4 }} />
+                          <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9, fontWeight: 700, color: p.c }}>{p.v}</div>
+                        </div>
+                        <div style={{ fontSize: 7, color: T.textD, textAlign: "center", marginTop: 2 }}>{p.l}</div>
+                      </div>
+                    ))}
+                  </div>
+                  {/* Individual scores */}
+                  {pillars.map(p => (
+                    <div key={p.l} style={{ textAlign: "center", fontSize: 12, fontWeight: 700, color: p.c }}>{p.v}</div>
+                  ))}
+                  {/* Master */}
+                  <div style={{ textAlign: "center" }}>
+                    <div style={{ fontSize: 14, fontWeight: 800, color: sc.color }}>{sc.master}</div>
+                    <div style={{ height: 3, background: T.bg2, borderRadius: 2, overflow: "hidden", marginTop: 3 }}>
+                      <div style={{ height: "100%", width: `${sc.master}%`, background: sc.color, borderRadius: 2 }} />
+                    </div>
+                  </div>
+                  {/* TF */}
+                  <div style={{ textAlign: "center", fontSize: 11, fontWeight: 700, color: sc.tfLabel === "Wait" ? T.red : sc.color }}>{sc.tfLabel}</div>
+                  {/* Signal badge */}
+                  <div style={{ textAlign: "center" }}>
+                    <span style={{ fontSize: 11, fontWeight: 700, padding: "4px 10px", borderRadius: 6, background: isBuy ? T.greenBg : isSell ? T.redBg : T.amberBg, color: isBuy ? T.green : isSell ? T.red : T.amber, border: `1px solid ${isBuy ? T.greenBd : isSell ? T.redBd : T.amberBd}` }}>
+                      {sc.dir}{sc.conflicted ? " ⚡" : ""}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* ── Bottom row: RSI Convergence + Open Signals Summary ──────────────── */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 20 }}>
+
+          {/* RSI Multi-TF */}
+          <div style={s.cd}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+              <div style={s.ct}><Activity size={14} />RSI Multi-TF Convergence</div>
+              {rsiAlerts.length > 0 && (
+                <span style={{ fontSize: 9, fontWeight: 700, padding: "2px 8px", borderRadius: 5, background: T.amberBg, color: T.amber, border: `1px solid ${T.amberBd}` }}>⚡ {rsiAlerts.length} alert{rsiAlerts.length > 1 ? "s" : ""}</span>
+              )}
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "80px 1fr 1fr 1fr 90px", gap: 6, marginBottom: 8, paddingBottom: 8, borderBottom: `1px solid ${T.border}` }}>
+              {["Pair", "15M", "1H", "Daily", "Signal"].map(h => <div key={h} style={{ fontSize: 8, color: T.textD, textTransform: "uppercase", letterSpacing: 0.4, textAlign: "center" }}>{h}</div>)}
+            </div>
+            {Object.keys(liveInstruments).map(key => {
+              const d = intelData?.instruments?.[key];
+              const rsi1d = d?.rsi ?? null;
+              const rsi1h = mtfRsi[key]?.["1H"] ?? null;
+              const rsi15m = mtfRsi[key]?.["15M"] ?? null;
+              const zone = r => r == null ? null : r > 70 ? "OB" : r > 55 ? "BULL" : r < 30 ? "OS" : r < 45 ? "BEAR" : "NEUT";
+              const rsiColor = r => r == null ? T.textD : r > 70 ? T.red : r < 30 ? T.green : r > 55 ? T.green : r < 45 ? T.red : T.amber;
+              const zones = [zone(rsi15m), zone(rsi1h), zone(rsi1d)].filter(Boolean);
+              const bulls = zones.filter(z => z === "BULL" || z === "OB").length;
+              const bears = zones.filter(z => z === "BEAR" || z === "OS").length;
+              let conv = null, convColor = T.textD, validTf = null;
+              if (bulls >= 2) { conv = bulls === 3 ? "STRONG ↑" : "BULL ↑"; convColor = T.green; validTf = rsi1h != null && zone(rsi1h) === "BULL" ? "1H" : "15M"; }
+              else if (bears >= 2) { conv = bears === 3 ? "STRONG ↓" : "BEAR ↓"; convColor = T.red; validTf = rsi1h != null && zone(rsi1h) === "BEAR" ? "1H" : "15M"; }
+              else if (zones.length >= 2) { conv = "MIXED"; convColor = T.amber; }
+              const divAlert = rsiAlerts.find(a => a.instrument === key);
+              const RsiPill = ({ val }) => {
+                if (val == null) return <div style={{ textAlign: "center", fontSize: 10, color: T.textD }}>—</div>;
+                const c = rsiColor(val);
+                const lbl = zone(val);
+                return (
+                  <div style={{ textAlign: "center" }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: c, fontFamily: "monospace" }}>{val.toFixed(0)}</div>
+                    <div style={{ height: 3, background: T.bg, borderRadius: 2, margin: "3px auto", width: "70%", overflow: "hidden" }}>
+                      <div style={{ height: "100%", width: `${val}%`, background: c }} />
+                    </div>
+                    <div style={{ fontSize: 8, color: c }}>{lbl}</div>
+                  </div>
+                );
+              };
+              return (
+                <div key={key} style={{ display: "grid", gridTemplateColumns: "80px 1fr 1fr 1fr 90px", gap: 6, alignItems: "center", padding: "8px 0", borderBottom: `1px solid ${T.border}` }}>
+                  <div>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: T.text }}>{key}</div>
+                    {divAlert && <div style={{ fontSize: 8, color: T.amber }}>⚡ div · {divAlert.timeframe}</div>}
+                  </div>
+                  <RsiPill val={rsi15m} />
+                  <RsiPill val={rsi1h} />
+                  <RsiPill val={rsi1d} />
+                  <div style={{ textAlign: "center" }}>
+                    {conv ? (
+                      <>
+                        <div style={{ fontSize: 9, fontWeight: 700, color: convColor, padding: "2px 6px", borderRadius: 4, background: `${convColor}18`, border: `1px solid ${convColor}30`, marginBottom: 2 }}>{conv}</div>
+                        {validTf && <div style={{ fontSize: 8, color: T.textD }}>TF: <span style={{ color: convColor, fontWeight: 700 }}>{validTf}</span></div>}
+                      </>
+                    ) : <span style={{ fontSize: 9, color: T.textD }}>—</span>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Open signals + option expiries stacked */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            {/* Open positions quick view */}
+            {openSigsAll.length > 0 && (
+              <div style={{ ...s.cd, flex: "none" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+                  <div style={s.ct}><Radio size={14} />Open Positions</div>
+                  <button onClick={() => { setView("intel-hub"); setPosTab("signals"); }} style={{ fontSize: 10, color: T.accent, background: "none", border: "none", cursor: "pointer" }}>Manage all →</button>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  {openSigsAll.slice(0, 4).map(sg => {
+                    const cur = liveData[sg.instrument]?.price;
+                    const pnl = cur && sg.entryPrice ? ((cur - sg.entryPrice) / sg.entryPrice * 100 * (sg.direction === "Long" ? 1 : -1)) : null;
+                    const isPos = (pnl ?? 0) >= 0;
+                    return (
+                      <div key={sg.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", borderRadius: 8, background: T.bg, border: `1px solid ${isPos ? T.greenBd : T.redBd}` }}>
+                        <div style={{ width: 3, height: 28, borderRadius: 2, background: sg.direction === "Long" ? T.green : T.red }} />
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontSize: 12, fontWeight: 700, color: T.text }}>{sg.instrument} <span style={{ fontSize: 10, color: sg.direction === "Long" ? T.green : T.red }}>{sg.direction}</span></div>
+                          <div style={{ fontSize: 10, color: T.textD }}>Entry {sg.entryPrice} · SL {sg.stopLoss || "—"}</div>
+                        </div>
+                        <div style={{ textAlign: "right" }}>
+                          <div style={{ fontSize: 12, fontWeight: 700, color: isPos ? T.green : T.red }}>{pnl != null ? `${pnl >= 0 ? "+" : ""}${pnl.toFixed(2)}%` : "—"}</div>
+                          {cur && <div style={{ fontSize: 9, color: T.textD, fontFamily: "monospace" }}>{fmtPrice(sg.instrument, cur)}</div>}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {openSigsAll.length > 4 && <div style={{ fontSize: 10, color: T.textD, textAlign: "center", padding: 4 }}>+{openSigsAll.length - 4} more positions</div>}
+                </div>
+              </div>
+            )}
+
+            {/* Option expiries */}
+            <div style={{ ...s.cd, flex: 1 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                <div style={s.ct}><Layers size={14} />FX Option Expiries</div>
+                <span style={{ fontSize: 10, color: T.cyan, fontWeight: 600 }}>NY 10AM CUT</span>
+              </div>
+              <div style={{ fontSize: 11, color: T.textM, marginBottom: 12, padding: "8px 12px", background: T.bg, borderRadius: 8, borderLeft: `3px solid ${T.cyan}`, lineHeight: 1.5 }}>{OPTION_EXPIRIES.context}</div>
+              {OPTION_EXPIRIES.entries.map((e, i) => (
+                <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", background: T.bg, borderRadius: 8, marginBottom: 6, border: `1px solid ${e.significance === "high" ? T.cyanBd : T.border}` }}>
+                  <div style={{ minWidth: 56 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: T.cyan }}>{e.pair}</div>
+                    <div style={{ fontSize: 9, color: T.textD }}>{e.notional}</div>
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <span style={{ fontSize: 14, fontWeight: 700, fontFamily: "monospace" }}>{e.strike}</span>
+                      <span style={{ fontSize: 9, padding: "1px 5px", borderRadius: 4, fontWeight: 600, background: e.significance === "high" ? T.cyanBg : T.amberBg, color: e.significance === "high" ? T.cyan : T.amber }}>{e.significance}</span>
+                    </div>
+                    <div style={{ fontSize: 10, color: T.textD }}>{e.techLevel}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </>
+    );
+  };
 
   const renderPositioning = () => {
     const inst = liveInstruments[sel];
@@ -754,8 +1335,9 @@ Return ONLY valid JSON (no markdown):
     const vd = VOL_DATA.instruments[sel];
     const analysis = ANALYSIS[sel];
     const liveC = cotLive?.instruments?.[sel];
+    const instData = intelData?.instruments?.[sel]; // live TA + SMC from /api/intelligence
 
-    // ── Scoring ──────────────────────────────────────────────────────────
+    // ── 5-Pillar Scoring ─────────────────────────────────────────────────
     const cotScore = liveC?.score ?? (() => {
       const net = inst.cot.netSpec;
       if (!net) return 50;
@@ -770,7 +1352,48 @@ Return ONLY valid JSON (no markdown):
       ? Math.round(Math.max(10, Math.min(90, 50 + (1.0 - oo.putCallRatio) * 38)))
       : 50;
 
-    const combined = Math.round(cotScore * 0.35 + sentScore * 0.30 + pcrScore * 0.35);
+    // ── TA Score (from live intelligence data) ────────────────────────
+    const taScore = instData ? (() => {
+      let s = 50;
+      if (instData.trend === "BULLISH") s += 14; else if (instData.trend === "BEARISH") s -= 14;
+      if (instData.rsi > 55) s += 8; else if (instData.rsi < 45) s -= 8;
+      if (instData.rsi > 70) s -= 6; else if (instData.rsi < 30) s += 6;
+      if (instData.macd?.cross === "bullish") s += 10; else if (instData.macd?.cross === "bearish") s -= 10;
+      else if (instData.macd?.histogram > 0) s += 5; else if (instData.macd?.histogram < 0) s -= 5;
+      if (instData.structure === "BREAKOUT") s += 12; else if (instData.structure === "BREAKDOWN") s -= 12;
+      else if (instData.structure === "TRENDING") s += 6;
+      if (instData.sma && instData.current) {
+        const { sma20, sma50, sma200 } = instData.sma;
+        const c = instData.current;
+        if (c > sma20 && c > sma50 && c > sma200) s += 8;
+        else if (c < sma20 && c < sma50 && c < sma200) s -= 8;
+      }
+      return Math.min(100, Math.max(0, Math.round(s)));
+    })() : 50;
+
+    // ── SMC Score (from live intelligence data) ───────────────────────
+    const smcScore = instData?.smc?.score ?? 50;
+
+    // ── 5-Pillar Master Score ─────────────────────────────────────────
+    // Weights: TA 28% · SMC 27% · COT 20% · Sentiment 13% · Flow 12%
+    const master = Math.round(taScore*0.28 + smcScore*0.27 + cotScore*0.20 + sentScore*0.13 + pcrScore*0.12);
+
+    // Conflict check: if TA and SMC strongly disagree, pull toward neutral
+    const taDir  = taScore  >= 58 ? "BULL" : taScore  <= 42 ? "BEAR" : "NEUTRAL";
+    const smcDir = smcScore >= 58 ? "BULL" : smcScore <= 42 ? "BEAR" : "NEUTRAL";
+    const conflicted = taDir !== "NEUTRAL" && smcDir !== "NEUTRAL" && taDir !== smcDir;
+    const combined = conflicted ? Math.round(master * 0.7 + 50 * 0.3) : master;
+
+    // ── Timeframe Recommendation ──────────────────────────────────────
+    const tfRec = (() => {
+      const allBull = taScore > 56 && smcScore > 56 && cotScore > 53;
+      const allBear = taScore < 44 && smcScore < 44 && cotScore < 47;
+      if (combined >= 68 && (allBull || allBear)) return { tf: "Daily → 4H", entry: "4H entry", trend: "Weekly/Daily trend", label: "Strong Multi-TF Alignment", note: "All pillars agree. Enter on 4H pullback/OB retest with Daily in same direction.", color: T.green };
+      if (combined >= 58 && !conflicted) return { tf: "4H → 1H", entry: "1H entry", trend: "4H trend", label: "Good Setup", note: "TA and SMC aligned. Wait for 1H structure confirmation before entry.", color: T.green };
+      if (combined >= 48 && !conflicted) return { tf: "1H → 15M", entry: "15M scalp", trend: "1H trend", label: "Moderate — reduce size", note: "Partial alignment. Use tight SL. Avoid holding overnight without strong COT backing.", color: T.amber };
+      if (conflicted) return { tf: "Wait", entry: "No trade", trend: "Monitor Daily", label: "TA ↔ SMC Conflict", note: "Technical and SMC signals oppose each other. Stand aside until one resolves.", color: T.red };
+      return { tf: "Wait", entry: "No trade", trend: "Monitor Daily", label: "Insufficient Conviction", note: "Score too low for a directional trade. Wait for a pillar to shift.", color: T.red };
+    })();
 
     const getDecision = s => {
       if (s >= 68) return { label: "Strong Buy", color: T.green, bg: T.greenBg, bd: T.greenBd, dir: "BUY" };
@@ -791,29 +1414,6 @@ Return ONLY valid JSON (no markdown):
       return               { signal:"STRONG BUY",  color:T.green, bg:T.greenBg, bd:T.greenBd, action:"High probability long. Institutions will squeeze retail shorts upward." };
     };
     const sentMeta = getSentMeta(retailLong);
-
-    // ── Sub-components ──────────────────────────────────────────────────
-    const ScoreBar = ({ score, label, weight, pillarColor }) => {
-      const c = score > 55 ? T.green : score < 45 ? T.red : T.amber;
-      return (
-        <div style={{ background: T.bg2, borderRadius: 12, padding: "14px 16px", border: `1px solid ${pillarColor}30` }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-            <span style={{ fontSize: 11, fontWeight: 600, color: pillarColor, textTransform: "uppercase", letterSpacing: 0.5 }}>{label}</span>
-            <span style={{ fontSize: 10, color: T.textD, background: T.bg, borderRadius: 4, padding: "2px 6px" }}>{weight}% weight</span>
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 5 }}>
-            <div style={{ flex: 1, height: 8, background: T.bg, borderRadius: 4, overflow: "hidden", position: "relative" }}>
-              <div style={{ position: "absolute", left: "50%", top: 0, height: "100%", width: 1, background: T.border }} />
-              <div style={{ height: "100%", width: `${score}%`, background: `linear-gradient(90deg, ${score > 50 ? "rgba(16,185,129,0.3)" : "rgba(239,68,68,0.3)"}, ${c})`, borderRadius: 4 }} />
-            </div>
-            <span style={{ fontSize: 20, fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: c, minWidth: 40, textAlign: "right" }}>{score}</span>
-          </div>
-          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, color: T.textD }}>
-            <span>BEAR (0)</span><span>NEUTRAL (50)</span><span>BULL (100)</span>
-          </div>
-        </div>
-      );
-    };
 
     const TabBtn = ({ id, label }) => (
       <button onClick={() => setPosTab(id)} style={{ padding: "7px 16px", borderRadius: 8, fontSize: 12, fontWeight: posTab === id ? 700 : 500, background: posTab === id ? T.bg4 : "transparent", border: `1px solid ${posTab === id ? T.borderL : T.border}`, color: posTab === id ? T.text : T.textD, cursor: "pointer" }}>{label}</button>
@@ -847,6 +1447,115 @@ Return ONLY valid JSON (no markdown):
     const prevNet = liveC?.prevSpecNet ?? inst.cot.prevNet;
     const weekChg = liveC?.weekChange ?? (specNet != null && prevNet != null ? specNet - prevNet : null);
     const cotDate = liveC?.date ?? inst.cot.date ?? "N/A";
+
+    // ── Signal Tab ────────────────────────────────────────────────────────
+    const renderSignalTab = () => {
+      const sig = instData?.signal;
+      const smc = instData?.smc;
+      const isBuy = decision.dir === "BUY";
+      const isSell = decision.dir === "SELL";
+
+      // Confluence checklist
+      const checks = [
+        { label: "COT Positioning",       pass: cotScore  >= 58 ? isBuy : cotScore <= 42 ? isSell : null, weight: "HIGH",   desc: cotScore >= 58 ? "Institutions net-long" : cotScore <= 42 ? "Institutions net-short" : "Neutral — no edge" },
+        { label: "Retail Sentiment",       pass: sentScore >= 58 ? isBuy : sentScore <= 42 ? isSell : null, weight: "MED",    desc: sentScore >= 58 ? "Crowd short — squeeze fuel" : sentScore <= 42 ? "Crowd long — fade zone" : "No extreme reading" },
+        { label: "Options Flow",           pass: pcrScore  >= 56 ? isBuy : pcrScore  <= 44 ? isSell : null, weight: "MED",    desc: oo?.putCallRatio != null ? `PCR ${oo.putCallRatio.toFixed(2)} — ${pcrScore >= 56 ? "bullish skew" : pcrScore <= 44 ? "bearish skew" : "neutral"}` : "No options data" },
+        { label: "Technical Analysis",     pass: taScore   >= 58 ? isBuy : taScore   <= 42 ? isSell : null, weight: "HIGH",   desc: instData ? `${instData.trend} · RSI ${instData.rsi?.toFixed(1)} · ${instData.structure}` : "Loading…" },
+        { label: "SMC Structure",          pass: smcScore  >= 58 ? isBuy : smcScore  <= 42 ? isSell : null, weight: "HIGH",   desc: smc ? `${smc.structureTrend} · ${smc.bos ? "BOS confirmed" : "No BOS"} · Score ${smcScore}` : "Loading…" },
+        { label: "Multi-TF Alignment",     pass: !conflicted && combined >= 55 ? isBuy : !conflicted && combined <= 45 ? isSell : null, weight: "HIGH", desc: tfRec.label },
+      ];
+      const passing = checks.filter(c => c.pass === true).length;
+      const failing = checks.filter(c => c.pass === false).length;
+      const neutral = checks.filter(c => c.pass === null).length;
+
+      return (
+        <>
+          {/* Timeframe Recommendation Card */}
+          <div style={{ background: T.bg2, borderRadius: 14, padding: "18px 22px", border: `2px solid ${tfRec.color}40`, marginBottom: 20 }}>
+            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
+              <div>
+                <div style={{ fontSize: 10, color: T.textD, textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>Best Timeframe to Trade</div>
+                <div style={{ fontSize: 28, fontWeight: 900, color: tfRec.color, letterSpacing: "-0.5px" }}>{tfRec.tf}</div>
+                <div style={{ fontSize: 13, color: T.textM, marginTop: 4 }}>
+                  <span style={{ color: tfRec.color, fontWeight: 700 }}>{tfRec.entry}</span>
+                  <span style={{ color: T.textD }}> · Trend: {tfRec.trend}</span>
+                </div>
+              </div>
+              <div style={{ maxWidth: 340, fontSize: 12, color: T.textM, lineHeight: 1.7, padding: "10px 14px", background: `${tfRec.color}10`, borderRadius: 10, border: `1px solid ${tfRec.color}25` }}>
+                {tfRec.note}
+              </div>
+            </div>
+          </div>
+
+          {/* Confluence Checklist */}
+          <div style={{ ...s.cd, marginBottom: 20 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+              <div style={s.ct}><Target size={14} />Confluence Checklist — {sel}</div>
+              <div style={{ display: "flex", gap: 8, fontSize: 11, fontWeight: 700 }}>
+                <span style={{ color: T.green }}>{passing} ✓</span>
+                <span style={{ color: T.red }}>{failing} ✗</span>
+                <span style={{ color: T.textD }}>{neutral} —</span>
+              </div>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+              {checks.map((c, i) => {
+                const col = c.pass === true ? T.green : c.pass === false ? T.red : T.textD;
+                const icon = c.pass === true ? "✓" : c.pass === false ? "✗" : "—";
+                const wCol = c.weight === "HIGH" ? T.red : c.weight === "MED" ? T.amber : T.textD;
+                return (
+                  <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, padding: "9px 12px", borderRadius: 8, background: c.pass === true ? T.greenBg : c.pass === false ? T.redBg : T.bg, border: `1px solid ${c.pass === true ? T.greenBd : c.pass === false ? T.redBd : T.border}` }}>
+                    <span style={{ fontSize: 14, fontWeight: 700, color: col, width: 18, textAlign: "center" }}>{icon}</span>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: T.text }}>{c.label}</div>
+                      <div style={{ fontSize: 11, color: T.textM, marginTop: 1 }}>{c.desc}</div>
+                    </div>
+                    <span style={{ fontSize: 9, fontWeight: 700, padding: "2px 6px", borderRadius: 3, background: `${wCol}18`, color: wCol, border: `1px solid ${wCol}30` }}>{c.weight}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Live Trade Signal */}
+          {sig ? (
+            <div style={{ ...s.cd, border: `1px solid ${isBuy ? T.greenBd : isSell ? T.redBd : T.border}` }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+                <div style={s.ct}><Zap size={14} />Live Trade Signal · {sel}</div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <span style={{ padding: "4px 12px", borderRadius: 6, fontSize: 12, fontWeight: 700, background: isBuy ? T.greenBg : T.redBg, color: isBuy ? T.green : T.red, border: `1px solid ${isBuy ? T.greenBd : T.redBd}` }}>{sig.direction}</span>
+                  <span style={{ padding: "4px 12px", borderRadius: 6, fontSize: 12, fontWeight: 700, background: T.bg, color: T.amber, border: `1px solid ${T.border}` }}>{sig.confidence}% conf</span>
+                </div>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10, marginBottom: 12 }}>
+                {[
+                  { label: "Entry Zone", value: instData ? (instData.current?.toFixed(instData.current > 1000 ? 2 : 5)) : "—", color: T.cyan },
+                  { label: "Stop Loss", value: sig.sl?.toFixed(sig.sl > 1000 ? 2 : 5), color: T.red },
+                  { label: "R:R Ratio", value: sig.rr, color: T.amber },
+                  { label: "TP 1", value: sig.tp1?.toFixed(sig.tp1 > 1000 ? 2 : 5), color: T.green },
+                  { label: "TP 2", value: sig.tp2?.toFixed(sig.tp2 > 1000 ? 2 : 5), color: T.green },
+                  { label: "TP 3", value: sig.tp3 ? sig.tp3.toFixed(sig.tp3 > 1000 ? 2 : 5) : "—", color: T.green },
+                ].map(row => (
+                  <div key={row.label} style={{ background: T.bg, borderRadius: 8, padding: "10px 12px", border: `1px solid ${T.border}` }}>
+                    <div style={{ fontSize: 9, color: T.textD, textTransform: "uppercase", letterSpacing: "0.5px" }}>{row.label}</div>
+                    <div style={{ fontSize: 15, fontWeight: 700, color: row.color, marginTop: 3, fontFamily: "monospace" }}>{row.value}</div>
+                  </div>
+                ))}
+              </div>
+              {sig.reason && <div style={{ fontSize: 12, color: T.textM, lineHeight: 1.6, padding: "10px 14px", background: T.bg, borderRadius: 8, border: `1px solid ${T.border}` }}>{sig.reason}</div>}
+              {conflicted && (
+                <div style={{ marginTop: 10, padding: "10px 14px", background: T.amberBg, border: `1px solid ${T.amberBd}`, borderRadius: 8, fontSize: 12, color: T.amber, display: "flex", gap: 8, alignItems: "center" }}>
+                  <AlertTriangle size={14} /> TA and SMC signals conflict — treat this signal as low confidence. Wait for alignment before executing.
+                </div>
+              )}
+            </div>
+          ) : (
+            <div style={{ ...s.cd, textAlign: "center", color: T.textD, fontSize: 13, padding: 30 }}>
+              {intelData ? "No signal generated — insufficient conviction or conflicting data." : "Loading intelligence data…"}
+            </div>
+          )}
+        </>
+      );
+    };
 
     // ── Overview tab ─────────────────────────────────────────────────────
     const renderOverviewTab = () => (
@@ -955,7 +1664,7 @@ Return ONLY valid JSON (no markdown):
 
         <div style={{ ...s.cd, marginTop: 16 }}>
           <div style={s.ct}><Database size={14} />COT key concepts</div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12, marginBottom: 14 }}>
+          <div className="cot-concepts" style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12, marginBottom: 14 }}>
             {[
               { title: "Non-Commercial (Speculators)", color: T.purple, icon: "📈", who: "Hedge funds, CTAs, prop traders", signal: "Extreme net longs = crowded. COT divergence (specs buying but price falling) = distribution warning." },
               { title: "Commercial (Hedgers)", color: T.cyan, icon: "🏭", who: "Producers, exporters, banks with real exposure", signal: "Commercials are right long-term. Extreme commercial net-long = bullish fundamentals." },
@@ -1135,512 +1844,70 @@ Return ONLY valid JSON (no markdown):
     // ── Main render ───────────────────────────────────────────────────────
     return (
       <>
-        {/* Decision banner */}
-        <div style={{ background: T.bg2, borderRadius: 14, padding: "18px 22px", border: `1px solid ${decision.bd}`, marginBottom: 20, display: "flex", alignItems: "center", gap: 20, flexWrap: "wrap" }}>
-          <div style={{ flex: 1, minWidth: 200 }}>
-            <div style={{ fontSize: 11, color: T.textD, textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 4 }}>Combined conviction score — {sel}</div>
-            <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-              <div style={{ fontSize: 48, fontWeight: 900, fontFamily: "'JetBrains Mono',monospace", color: decision.color, lineHeight: 1 }}>{combined}</div>
-              <div>
-                <div style={{ fontSize: 18, fontWeight: 700, color: decision.color }}>{decision.label}</div>
-                <div style={{ fontSize: 12, color: T.textD, marginTop: 2 }}>out of 100 · weighted 35/30/35</div>
+        {/* ── Intelligence Hub Header ── */}
+        <div style={{ background: T.bg2, borderRadius: 14, padding: "16px 20px", border: `1px solid ${decision.bd}`, marginBottom: 20 }}>
+          <div style={{ display: "flex", alignItems: "flex-start", gap: 20, flexWrap: "wrap" }}>
+            {/* Master score */}
+            <div style={{ minWidth: 140 }}>
+              <div style={{ fontSize: 10, color: T.textD, textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 4 }}>Master Score — {sel}</div>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
+                <div style={{ fontSize: 52, fontWeight: 900, fontFamily: "'JetBrains Mono',monospace", color: decision.color, lineHeight: 1 }}>{combined}</div>
+                <div>
+                  <div style={{ fontSize: 16, fontWeight: 700, color: decision.color }}>{decision.label}</div>
+                  <div style={{ fontSize: 10, color: T.textD }}>5 pillars · out of 100</div>
+                  {conflicted && <div style={{ fontSize: 10, color: T.amber, marginTop: 2 }}>⚡ TA ↔ SMC conflict</div>}
+                </div>
               </div>
             </div>
-          </div>
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            {[{ label: "COT", score: cotScore, w: "35%" }, { label: "Sentiment", score: sentScore, w: "30%" }, { label: "Options/Flow", score: pcrScore, w: "35%" }].map(p => {
-              const c = p.score > 55 ? T.green : p.score < 45 ? T.red : T.amber;
-              return (
-                <div key={p.label} style={{ textAlign: "center", padding: "10px 16px", background: T.bg, borderRadius: 10, border: `1px solid ${T.border}`, minWidth: 80 }}>
-                  <div style={{ fontSize: 10, color: T.textD, marginBottom: 3 }}>{p.label} · {p.w}</div>
-                  <div style={{ fontSize: 22, fontWeight: 800, fontFamily: "'JetBrains Mono',monospace", color: c }}>{p.score}</div>
-                  <div style={{ fontSize: 9, color: c, textTransform: "uppercase", marginTop: 1 }}>{p.score > 55 ? "Bull" : p.score < 45 ? "Bear" : "Neutral"}</div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
 
-        {/* Score bars */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 20 }}>
-          <ScoreBar score={cotScore} label="COT Positioning" weight={35} pillarColor={T.purple} />
-          <ScoreBar score={sentScore} label="Retail Sentiment" weight={30} pillarColor={T.amber} />
-          <ScoreBar score={pcrScore} label="Options / Flow" weight={35} pillarColor={T.blue} />
+            {/* 5 pillar scores */}
+            <div style={{ flex: 1, display: "grid", gridTemplateColumns: "repeat(5,1fr)", gap: 8, minWidth: 0 }}>
+              {[
+                { label: "TA", score: taScore, color: T.cyan, w: "28%" },
+                { label: "SMC", score: smcScore, color: T.purple, w: "27%" },
+                { label: "COT", score: cotScore, color: T.blue, w: "20%" },
+                { label: "Sentiment", score: sentScore, color: T.amber, w: "13%" },
+                { label: "Flow", score: pcrScore, color: T.green, w: "12%" },
+              ].map(p => {
+                const c = p.score >= 58 ? T.green : p.score <= 42 ? T.red : T.amber;
+                return (
+                  <div key={p.label} style={{ textAlign: "center", padding: "10px 8px", background: T.bg, borderRadius: 10, border: `1px solid ${p.color}30` }}>
+                    <div style={{ fontSize: 9, color: p.color, fontWeight: 700, marginBottom: 1 }}>{p.label}</div>
+                    <div style={{ fontSize: 9, color: T.textD, marginBottom: 6 }}>{p.w}</div>
+                    <div style={{ fontSize: 22, fontWeight: 800, fontFamily: "'JetBrains Mono',monospace", color: c }}>{p.score}</div>
+                    <div style={{ fontSize: 9, color: c, textTransform: "uppercase", marginTop: 2 }}>{p.score >= 58 ? "Bull" : p.score <= 42 ? "Bear" : "Neutral"}</div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Timeframe badge */}
+            <div style={{ textAlign: "center", padding: "12px 18px", background: `${tfRec.color}10`, borderRadius: 12, border: `1px solid ${tfRec.color}30`, minWidth: 120 }}>
+              <div style={{ fontSize: 9, color: T.textD, textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 4 }}>Best Timeframe</div>
+              <div style={{ fontSize: 18, fontWeight: 800, color: tfRec.color }}>{tfRec.tf}</div>
+              <div style={{ fontSize: 10, color: T.textM, marginTop: 3 }}>{tfRec.entry}</div>
+            </div>
+          </div>
         </div>
 
         {/* Sub-tab nav */}
-        <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
-          <TabBtn id="overview" label="Combined Analysis" />
-          <TabBtn id="cot" label="COT Data" />
+        <div style={{ display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
+          <TabBtn id="signal"    label="🎯 Signal" />
+          <TabBtn id="overview"  label="Combined Analysis" />
+          <TabBtn id="cot"       label="COT Data" />
           <TabBtn id="sentiment" label="Retail Sentiment" />
-          <TabBtn id="flow" label="Options & Flow" />
+          <TabBtn id="flow"      label="Options & Flow" />
         </div>
 
-        {posTab === "overview" && renderOverviewTab()}
-        {posTab === "cot" && renderCOTTab()}
+        {posTab === "signal"    && renderSignalTab()}
+        {posTab === "overview"  && renderOverviewTab()}
+        {posTab === "cot"       && renderCOTTab()}
         {posTab === "sentiment" && renderSentimentTab()}
-        {posTab === "flow" && renderFlowTab()}
+        {posTab === "flow"      && renderFlowTab()}
       </>
     );
   };
 
-  const renderCOT = () => (<>
-
-    {/* ── COT Education Banner ── */}
-    <div style={{ background: T.bg2, borderRadius: 14, padding: "18px 22px", border: `1px solid ${T.border}`, marginBottom: 20 }}>
-      <div style={{ fontSize: 14, fontWeight: 800, color: T.text, marginBottom: 10, display: "flex", alignItems: "center", gap: 8 }}>
-        <Database size={16} style={{ color: T.purple }} /> What is the COT Report?
-      </div>
-      <div style={{ fontSize: 12, color: T.textM, lineHeight: 1.8, marginBottom: 14 }}>
-        The <strong style={{ color: T.text }}>Commitments of Traders (COT)</strong> report is published every Friday by the <strong style={{ color: T.text }}>U.S. Commodity Futures Trading Commission (CFTC)</strong>. It shows how the three major trader groups are positioned in futures markets as of the prior Tuesday. This is institutional-grade positioning data — the same information used by hedge funds and proprietary trading desks worldwide.
-      </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 14 }}>
-        {[
-          { title: "Non-Commercial (Speculators)", color: T.purple, icon: "📈",
-            who: "Hedge funds, CTAs, prop traders, large retail operators", motive: "Pure profit — they have no underlying exposure to hedge", signal: "When net-long > 80% of historical range = crowded trade. Price often reverses against them. COT divergence (specs buying but price falling) = bearish warning.", bgColor: `${T.purple}08` },
-          { title: "Commercial (Hedgers)", color: T.cyan, icon: "🏭",
-            who: "Producers, exporters, importers, banks — entities with real exposure", motive: "Risk management — they take the opposite side of their real-world business risk", signal: "Commercials are long when they fear price will rise, short when they fear a fall. They're usually correct over the long-term. Extreme commercial net-long = bullish fundamentals.", bgColor: `${T.cyan}08` },
-          { title: "Non-Reportable (Small Specs)", color: T.amber, icon: "👤",
-            who: "Retail traders and small investors below the reporting threshold", motive: "Speculation — similar to non-commercials but smaller scale", signal: "Acts like a dumb-money indicator. When small specs are extremely one-sided, it often confirms a crowded trade that's due for reversal. Less reliable alone but useful for confirmation.", bgColor: `${T.amber}08` },
-        ].map(g => (
-          <div key={g.title} style={{ background: g.bgColor, borderRadius: 10, padding: "12px 14px", border: `1px solid ${g.color}25` }}>
-            <div style={{ fontSize: 12, fontWeight: 700, color: g.color, marginBottom: 6 }}>{g.icon} {g.title}</div>
-            <div style={{ fontSize: 11, color: T.textD, marginBottom: 4 }}><strong style={{ color: T.textM }}>Who:</strong> {g.who}</div>
-            <div style={{ fontSize: 11, color: T.textD, marginBottom: 4 }}><strong style={{ color: T.textM }}>Motive:</strong> {g.motive}</div>
-            <div style={{ fontSize: 11, color: T.textM, lineHeight: 1.6, borderTop: `1px solid ${g.color}20`, paddingTop: 6, marginTop: 4 }}><strong style={{ color: g.color }}>Signal:</strong> {g.signal}</div>
-          </div>
-        ))}
-      </div>
-
-      {/* How to read the chart */}
-      <div style={{ background: T.bg, borderRadius: 10, padding: "12px 16px", border: `1px solid ${T.border}` }}>
-        <div style={{ fontSize: 12, fontWeight: 700, color: T.text, marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
-          <Activity size={13} style={{ color: T.cyan }} /> Key COT Concepts to Master
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 10 }}>
-          {[
-            { term: "COT Divergence", color: T.red, explain: "Price makes a new high but speculator net-long positions are falling. Classic distribution pattern — smart money is quietly selling while retail chases the move. One of the most reliable leading indicators of a reversal." },
-            { term: "Net Position Extreme", color: T.amber, explain: "When speculators are positioned at multi-year extremes (top or bottom 10% of their historical range), the market is 'crowded'. Reversals from these extremes can be violent as everyone rushes for the exit simultaneously." },
-            { term: "Commercial Accumulation", color: T.cyan, explain: "When commercials are building unusual net-long positions (hedgers buying protection against price rises), it often signals they expect prices to move higher. Follow commercial hedger intent, not their direction." },
-            { term: "Spec Momentum", color: T.green, explain: "When speculators are consistently adding to net-long/short positions week over week, it confirms a trending market. The trend is likely to continue until positioning reaches an extreme or COT divergence appears." },
-          ].map(c => (
-            <div key={c.term} style={{ padding: "8px 10px", background: T.bg2, borderRadius: 7, border: `1px solid ${T.border}` }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: c.color, marginBottom: 3 }}>{c.term}</div>
-              <div style={{ fontSize: 11, color: T.textD, lineHeight: 1.6 }}>{c.explain}</div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      <div style={{ marginTop: 10, fontSize: 11, color: T.textD, display: "flex", alignItems: "center", gap: 8 }}>
-        <div style={{ width: 6, height: 6, borderRadius: 3, background: T.amber }} />
-        COT data is released every Friday at 3:30 PM ET covering positions as of the prior Tuesday. There is a ~3 day lag built into the data.
-        <span style={{ marginLeft: "auto", color: T.purple, fontWeight: 600 }}>Latest: {inst?.cot?.date || "N/A"}</span>
-      </div>
-    </div>
-
-    <div style={s.g4}>
-      <MetricCard label="Price" value={priceStr(inst)} sub={`${inst.change>0?"+":""}${inst.change}% weekly`} subColor={inst.change>0?T.green:T.red} icon={TrendingUp}/>
-      <MetricCard label="Spec net" value={inst.cot.netSpec?fmt(inst.cot.netSpec):(inst.cot.crossBias||"N/A")} sub={inst.cot.prevNet?`prev: ${fmt(inst.cot.prevNet)}`:""} icon={BarChart3}/>
-      <MetricCard label="Open interest" value={inst.cot.oi?fmt(inst.cot.oi):"Cross"} icon={Database}/>
-      <MetricCard label="Composite" value={inst.composite} subColor={inst.compositeColor} sub={inst.cot.date} icon={Target}/>
-    </div>
-    <div style={s.g2}>
-      <div style={s.cd}>
-        <div style={s.ct}><Database size={14}/>Positioning breakdown</div>
-        <Tip text="This table shows how different trader groups are positioned. Non-commercial = speculators (hedge funds). Commercial = hedgers (producers/banks). When speculators are heavily one-sided, the market often reverses. Commercials typically trade opposite to the trend as hedges." />
-        {inst.name==="XAUUSD"?(<table style={s.tb}><thead><tr>{["Category","Long","Short","Net"].map(h=><th key={h} style={s.th}>{h}</th>)}</tr></thead><tbody>
-          <tr><td style={s.td}>Non-commercial</td><td style={s.td}>{inst.cot.nonComm.long.toLocaleString()}</td><td style={s.td}>{inst.cot.nonComm.short.toLocaleString()}</td><td style={{...s.td,color:T.green}}>+{fmt(inst.cot.nonComm.long-inst.cot.nonComm.short)}</td></tr>
-          <tr><td style={s.td}>Commercial</td><td style={s.td}>{inst.cot.comm.long.toLocaleString()}</td><td style={s.td}>{inst.cot.comm.short.toLocaleString()}</td><td style={{...s.td,color:T.red}}>{fmt(inst.cot.comm.long-inst.cot.comm.short)}</td></tr>
-          <tr><td style={s.td}>Non-reportable</td><td style={s.td}>{inst.cot.nonRep.long.toLocaleString()}</td><td style={s.td}>{inst.cot.nonRep.short.toLocaleString()}</td><td style={{...s.td,color:T.green}}>+{fmt(inst.cot.nonRep.long-inst.cot.nonRep.short)}</td></tr>
-        </tbody></table>):inst.name==="GBPUSD"?(<table style={s.tb}><thead><tr>{["Category","Long","Short","Net"].map(h=><th key={h} style={s.th}>{h}</th>)}</tr></thead><tbody>
-          <tr><td style={s.td}>Asset managers</td><td style={s.td}>{inst.cot.assetMgr.long.toLocaleString()}</td><td style={s.td}>{inst.cot.assetMgr.short.toLocaleString()}</td><td style={{...s.td,color:T.red}}>{fmt(inst.cot.assetMgr.long-inst.cot.assetMgr.short)}</td></tr>
-          <tr><td style={s.td}>Leveraged funds</td><td style={s.td}>{inst.cot.leveraged.long.toLocaleString()}</td><td style={s.td}>{inst.cot.leveraged.short.toLocaleString()}</td><td style={{...s.td,color:T.green}}>+{fmt(inst.cot.leveraged.long-inst.cot.leveraged.short)}</td></tr>
-          <tr><td style={s.td}>Dealers</td><td style={s.td}>{inst.cot.dealer.long.toLocaleString()}</td><td style={s.td}>{inst.cot.dealer.short.toLocaleString()}</td><td style={{...s.td,color:T.green}}>+{fmt(inst.cot.dealer.long-inst.cot.dealer.short)}</td></tr>
-        </tbody></table>):inst.name==="GBPJPY"?(<table style={s.tb}><thead><tr>{["Leg","Spec net","Bias"].map(h=><th key={h} style={s.th}>{h}</th>)}</tr></thead><tbody>
-          <tr><td style={s.td}>GBP</td><td style={{...s.td,color:T.red}}>{fmt(inst.cot.gbpNet)}</td><td style={{...s.td,color:T.red}}>Bearish</td></tr>
-          <tr><td style={s.td}>JPY</td><td style={{...s.td,color:T.red}}>{fmt(inst.cot.jpyNet)}</td><td style={{...s.td,color:T.red}}>Bearish</td></tr>
-          <tr><td style={{...s.td,fontWeight:600}}>Cross</td><td style={{...s.td,color:T.green}} colSpan={2}>Mildly bullish</td></tr>
-        </tbody></table>):(<table style={s.tb}><thead><tr>{["Category","Position","Bias"].map(h=><th key={h} style={s.th}>{h}</th>)}</tr></thead><tbody>
-          <tr><td style={s.td}>Asset mgrs</td><td style={s.td}>{inst.cot.assetMgr}</td><td style={{...s.td,color:T.green}}>Bullish</td></tr>
-          <tr><td style={s.td}>Leveraged</td><td style={s.td}>{inst.cot.leveraged}</td><td style={{...s.td,color:T.red}}>Bearish</td></tr>
-          <tr><td style={s.td}>Dealers</td><td style={s.td}>{inst.cot.dealer}</td><td style={{...s.td,color:T.amber}}>Neutral</td></tr>
-        </tbody></table>)}
-      </div>
-      <div style={s.cd}>
-        <div style={s.ct}><Activity size={14}/>Net positioning vs price</div>
-        <Tip text="When the purple area (net speculator positioning) moves in the same direction as the green line (price), the trend is confirmed. When they diverge — price goes up but positioning goes down — it's a warning sign called 'COT divergence' that often precedes a reversal." />
-        <ResponsiveContainer width="100%" height={220}>
-          <ComposedChart data={inst.history}><CartesianGrid stroke={T.border} strokeDasharray="3 3"/><XAxis dataKey="w" tick={{fill:T.textD,fontSize:10}}/><YAxis yAxisId="l" tick={{fill:T.textD,fontSize:10}}/><YAxis yAxisId="r" orientation="right" tick={{fill:T.textD,fontSize:10}}/><Tooltip contentStyle={{background:T.bg3,border:`1px solid ${T.border}`,borderRadius:8,fontSize:11}}/><Area yAxisId="l" dataKey="net" fill="rgba(139,92,246,0.12)" stroke={T.purple} strokeWidth={2} name="Net (K)"/><Line yAxisId="r" dataKey="price" stroke={T.green} strokeWidth={2} dot={{r:3,fill:T.green}} strokeDasharray="5 3" name="Price"/></ComposedChart>
-        </ResponsiveContainer>
-      </div>
-    </div>
-    <div style={s.cd}><div style={s.ct}><Zap size={14}/>Signals — {inst.name}</div>{inst.signals.map((sig,i)=><div key={i} style={s.sr(sig.type)}><div style={{marginTop:2}}><SignalIcon type={sig.type}/></div><div style={{color:T.text}}>{sig.text}</div></div>)}</div>
-
-    {(()=>{ const a = ANALYSIS[sel]; if (!a) return null; return (<>
-    <div style={{...s.cd,marginTop:18,borderColor:a.verdictColor,borderWidth:1}}>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
-        <div style={s.ct}><Brain size={14}/>Complete analysis — {sel}</div>
-        <div style={{display:"flex",alignItems:"center",gap:8}}>
-          <span style={{fontSize:11,color:T.textD}}>Conviction:</span>
-          <div style={{display:"flex",gap:3}}>{[1,2,3,4,5].map(n=><div key={n} style={{width:10,height:10,borderRadius:5,background:n<=a.riskLevel?a.verdictColor:`${a.verdictColor}30`}}/>)}</div>
-          <span style={{padding:"3px 12px",borderRadius:6,fontSize:12,fontWeight:700,background:`${a.verdictColor}18`,color:a.verdictColor,border:`1px solid ${a.verdictColor}40`}}>{a.verdict}</span>
-        </div>
-      </div>
-      <div style={{fontSize:14,color:T.text,lineHeight:1.7,marginBottom:20,fontStyle:"italic",padding:"12px 16px",background:T.bg,borderRadius:10}}>{a.summary}</div>
-
-      {a.layers.map((l,i)=>(
-        <div key={i} style={{marginBottom:20}}>
-          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
-            <div style={{width:6,height:6,borderRadius:3,background:l.color}}/>
-            <span style={{fontSize:14,fontWeight:600,color:T.text}}>{l.title}</span>
-          </div>
-          <div style={{fontSize:12,color:T.purple,lineHeight:1.6,padding:"8px 14px",background:`${T.purple}08`,borderRadius:8,borderLeft:`3px solid ${T.purple}`,marginBottom:8}}>
-            <span style={{fontSize:10,fontWeight:600,textTransform:"uppercase",letterSpacing:0.6,display:"block",marginBottom:2,color:T.purple}}>What this means</span>
-            {l.explain}
-          </div>
-          <div style={{display:"flex",gap:10,alignItems:"flex-start",padding:"10px 14px",background:SigBg(l.signal),border:`1px solid ${SigBd(l.signal)}`,borderRadius:8}}>
-            <div style={{marginTop:2}}><SignalIcon type={l.signal}/></div>
-            <div style={{fontSize:13,color:T.text,lineHeight:1.7}}>{l.finding}</div>
-          </div>
-        </div>
-      ))}
-
-      <div style={{borderTop:`1px solid ${T.border}`,paddingTop:16,marginTop:8}}>
-        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
-          <Target size={16} style={{color:a.verdictColor}}/>
-          <span style={{fontSize:15,fontWeight:700,color:a.verdictColor}}>Bottom line</span>
-        </div>
-        <div style={{fontSize:13,color:T.text,lineHeight:1.8,padding:"14px 18px",background:T.bg,borderRadius:10,border:`1px solid ${a.verdictColor}30`}}>{a.bottomLine}</div>
-      </div>
-    </div>
-    </>); })()}
-  </>);
-
-  const renderSentiment = () => {
-    const getSentimentMeta = (longPct) => {
-      const dev = longPct - 50;
-      const absDev = Math.abs(dev);
-      if (longPct >= 75) return { signal: "STRONG SELL", color: T.red, bg: T.redBg, bd: T.redBd, strength: "Extreme", tag: "Crowd extremely long — prime fade zone", action: "Look to sell rallies. Institutions typically hunt stops below retail longs at this level.", risk: "HIGH — reversal imminent or already underway" };
-      if (longPct >= 65) return { signal: "SELL BIAS", color: T.red, bg: T.redBg, bd: T.redBd, strength: "Strong", tag: "Crowded long — contrarian bearish signal", action: "Bias shorts on pullbacks. Wait for price confirmation before entering.", risk: "MODERATE-HIGH" };
-      if (longPct >= 55) return { signal: "MILD SELL", color: T.amber, bg: T.amberBg, bd: T.amberBd, strength: "Moderate", tag: "Retail leaning long — weak contrarian edge", action: "No strong signal. Combine with COT and technicals before acting.", risk: "LOW-MODERATE" };
-      if (longPct >= 45) return { signal: "NEUTRAL", color: T.textM, bg: T.bg3, bd: T.border, strength: "None", tag: "50/50 split — no contrarian edge", action: "Sentiment is not actionable here. Rely on COT and technicals instead.", risk: "LOW" };
-      if (longPct >= 35) return { signal: "MILD BUY", color: T.amber, bg: T.amberBg, bd: T.amberBd, strength: "Moderate", tag: "Retail leaning short — weak contrarian edge", action: "Slight buy bias, but not extreme enough to act alone. Confirm with structure.", risk: "LOW-MODERATE" };
-      if (longPct >= 25) return { signal: "BUY BIAS", color: T.green, bg: T.greenBg, bd: T.greenBd, strength: "Strong", tag: "Crowded short — contrarian bullish signal", action: "Bias longs on dips. Retail stops above current price are fuel for a squeeze.", risk: "MODERATE-HIGH" };
-      return { signal: "STRONG BUY", color: T.green, bg: T.greenBg, bd: T.greenBd, strength: "Extreme", tag: "Crowd extremely short — prime squeeze zone", action: "High probability long setup. Institutions will squeeze retail shorts upward.", risk: "HIGH — squeeze likely in motion" };
-    };
-
-    const allInstruments = Object.values(INSTRUMENTS);
-    const extremes = allInstruments.filter(i => Math.abs(i.sentiment.retailLong - 50) > 20);
-
-    return (
-      <>
-        {/* ── How it works banner ── */}
-        <div style={{ background: T.bg2, borderRadius: 12, padding: "16px 20px", border: `1px solid ${T.border}`, marginBottom: 20, display: "flex", gap: 20, flexWrap: "wrap" }}>
-          <div style={{ flex: 1, minWidth: 260 }}>
-            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6, color: T.text }}>How to read retail sentiment</div>
-            <div style={{ fontSize: 12, color: T.textM, lineHeight: 1.7 }}>
-              Retail traders as a group are statistically net losers. When the crowd is heavily positioned in one direction, institutions and smart money often push the other way to collect their stops. <strong style={{ color: T.text }}>Extreme readings (&gt;70% or &lt;30%) are the most actionable signals.</strong>
-            </div>
-          </div>
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-            {[
-              { range: "> 70% Long", signal: "Strong Sell", color: T.red },
-              { range: "60–70% Long", signal: "Sell Bias", color: T.red },
-              { range: "45–55% Long", signal: "Neutral", color: T.textM },
-              { range: "30–40% Long", signal: "Buy Bias", color: T.green },
-              { range: "< 30% Long", signal: "Strong Buy", color: T.green },
-            ].map(r => (
-              <div key={r.range} style={{ textAlign: "center", padding: "8px 12px", background: T.bg, borderRadius: 8, border: `1px solid ${T.border}`, minWidth: 90 }}>
-                <div style={{ fontSize: 10, color: T.textD, marginBottom: 3 }}>{r.range}</div>
-                <div style={{ fontSize: 11, fontWeight: 700, color: r.color }}>{r.signal}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* ── Alert bar for extremes ── */}
-        {extremes.length > 0 && (
-          <div style={{ background: T.amberBg, border: `1px solid ${T.amberBd}`, borderRadius: 10, padding: "12px 16px", marginBottom: 16, display: "flex", alignItems: "center", gap: 10 }}>
-            <AlertTriangle size={16} color={T.amber} style={{ flexShrink: 0 }} />
-            <div style={{ fontSize: 12, color: T.textM }}>
-              <strong style={{ color: T.amber }}>Extreme sentiment detected:</strong>{" "}
-              {extremes.map(i => {
-                const m = getSentimentMeta(i.sentiment.retailLong);
-                return `${i.name} (${i.sentiment.retailLong}% long → ${m.signal})`;
-              }).join(" · ")}
-            </div>
-          </div>
-        )}
-
-        {/* ── Sentiment matrix ── */}
-        <div style={{ ...s.cd, marginBottom: 20 }}>
-          <div style={s.ct}><Activity size={14} />Sentiment matrix — all instruments</div>
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-              <thead>
-                <tr style={{ borderBottom: `1px solid ${T.border}` }}>
-                  {["Instrument", "Long %", "Short %", "Positioning", "Contrarian Signal", "Signal Strength", "Tradeable?"].map(h => (
-                    <th key={h} style={{ padding: "7px 12px", textAlign: "left", fontSize: 10, fontWeight: 600, color: T.textD, textTransform: "uppercase", letterSpacing: "0.4px", whiteSpace: "nowrap" }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {allInstruments.map(i => {
-                  const m = getSentimentMeta(i.sentiment.retailLong);
-                  const tradeable = Math.abs(i.sentiment.retailLong - 50) > 15;
-                  return (
-                    <tr key={i.name} style={{ borderBottom: `1px solid ${T.border}` }} onClick={() => setSel(i.name)}>
-                      <td style={{ padding: "10px 12px", fontWeight: 700 }}>{i.name} <span style={{ fontSize: 10, color: T.textD, fontWeight: 400 }}>{i.label}</span></td>
-                      <td style={{ padding: "10px 12px", fontWeight: 700, color: T.green }}>{i.sentiment.retailLong}%</td>
-                      <td style={{ padding: "10px 12px", fontWeight: 700, color: T.red }}>{i.sentiment.retailShort}%</td>
-                      <td style={{ padding: "10px 12px" }}>
-                        <div style={{ width: 100, height: 8, borderRadius: 4, overflow: "hidden", background: T.bg3, display: "flex" }}>
-                          <div style={{ width: `${i.sentiment.retailLong}%`, background: T.green }} />
-                          <div style={{ width: `${i.sentiment.retailShort}%`, background: T.red }} />
-                        </div>
-                      </td>
-                      <td style={{ padding: "10px 12px" }}>
-                        <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 4, background: m.bg, color: m.color, border: `1px solid ${m.bd}` }}>{m.signal}</span>
-                      </td>
-                      <td style={{ padding: "10px 12px", color: m.color, fontWeight: 600 }}>{m.strength}</td>
-                      <td style={{ padding: "10px 12px" }}>
-                        <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 4, background: tradeable ? T.greenBg : T.bg3, color: tradeable ? T.green : T.textD, border: `1px solid ${tradeable ? T.greenBd : T.border}` }}>
-                          {tradeable ? "YES" : "WAIT"}
-                        </span>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        {/* ── Per-instrument detail cards ── */}
-        <div style={s.g2}>
-          {allInstruments.map(i => {
-            const m = getSentimentMeta(i.sentiment.retailLong);
-            const longChg = i.history.length > 1 ? i.sentiment.retailLong - (100 - (i.history[i.history.length - 2]?.net < 0 ? 60 : 40)) : 0;
-            const histPrices = i.history.map(h => h.price);
-            const priceUp = histPrices[histPrices.length - 1] > histPrices[0];
-            const diverging = (priceUp && i.sentiment.retailLong > 60) || (!priceUp && i.sentiment.retailLong < 40);
-
-            return (
-              <div key={i.name} style={{ ...s.cd, border: `1px solid ${Math.abs(i.sentiment.retailLong - 50) > 20 ? m.bd : T.border}` }}>
-                {/* Header */}
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14 }}>
-                  <div>
-                    <div style={{ fontSize: 15, fontWeight: 800 }}>{i.name}</div>
-                    <div style={{ fontSize: 11, color: T.textD, marginTop: 2 }}>{i.label}</div>
-                  </div>
-                  <span style={{ fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 5, background: m.bg, color: m.color, border: `1px solid ${m.bd}` }}>{m.signal}</span>
-                </div>
-
-                {/* Gauge */}
-                <GaugeBar longPct={i.sentiment.retailLong} shortPct={i.sentiment.retailShort} label="Retail positioning" />
-
-                {/* Stats grid */}
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 14 }}>
-                  <div style={{ background: T.bg, borderRadius: 8, padding: "8px 10px" }}>
-                    <div style={{ fontSize: 9, color: T.textD, textTransform: "uppercase", letterSpacing: "0.4px", marginBottom: 3 }}>Long %</div>
-                    <div style={{ fontSize: 18, fontWeight: 800, color: T.green }}>{i.sentiment.retailLong}%</div>
-                  </div>
-                  <div style={{ background: T.bg, borderRadius: 8, padding: "8px 10px" }}>
-                    <div style={{ fontSize: 9, color: T.textD, textTransform: "uppercase", letterSpacing: "0.4px", marginBottom: 3 }}>Short %</div>
-                    <div style={{ fontSize: 18, fontWeight: 800, color: T.red }}>{i.sentiment.retailShort}%</div>
-                  </div>
-                  <div style={{ background: T.bg, borderRadius: 8, padding: "8px 10px" }}>
-                    <div style={{ fontSize: 9, color: T.textD, textTransform: "uppercase", letterSpacing: "0.4px", marginBottom: 3 }}>Signal</div>
-                    <div style={{ fontSize: 13, fontWeight: 800, color: m.color }}>{m.strength}</div>
-                  </div>
-                </div>
-
-                {/* Divergence warning */}
-                {diverging && (
-                  <div style={{ background: T.amberBg, border: `1px solid ${T.amberBd}`, borderRadius: 7, padding: "8px 10px", marginBottom: 12, fontSize: 11, color: T.amber, display: "flex", gap: 6 }}>
-                    <AlertTriangle size={12} style={{ flexShrink: 0, marginTop: 1 }} />
-                    <span><strong>Price-sentiment divergence:</strong> Price is moving {priceUp ? "up" : "down"} but retail is {i.sentiment.retailLong > 50 ? "heavily long" : "heavily short"} — classic smart money trap setup.</span>
-                  </div>
-                )}
-
-                {/* Contrarian interpretation */}
-                <div style={{ background: m.bg, border: `1px solid ${m.bd}`, borderRadius: 8, padding: "10px 12px", marginBottom: 12 }}>
-                  <div style={{ fontSize: 10, fontWeight: 700, color: m.color, textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 5 }}>Contrarian interpretation</div>
-                  <div style={{ fontSize: 12, color: T.textM, lineHeight: 1.6 }}>{m.tag}</div>
-                </div>
-
-                {/* Recommended action */}
-                <div style={{ borderRadius: 8, padding: "10px 12px", background: T.bg, border: `1px solid ${T.border}`, marginBottom: 10 }}>
-                  <div style={{ fontSize: 10, fontWeight: 700, color: T.textD, textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 5 }}>Recommended action</div>
-                  <div style={{ fontSize: 12, color: T.textM, lineHeight: 1.6 }}>{m.action}</div>
-                </div>
-
-                {/* Risk level */}
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderTop: `1px solid ${T.border}` }}>
-                  <span style={{ fontSize: 10, color: T.textD, textTransform: "uppercase" }}>Signal risk level</span>
-                  <span style={{ fontSize: 11, fontWeight: 700, color: m.color }}>{m.risk}</span>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-
-        {/* ── How professionals use sentiment ── */}
-        <div style={{ ...s.cd, marginTop: 4 }}>
-          <div style={s.ct}><Brain size={14} />How professionals use retail sentiment</div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12, marginBottom: 16 }}>
-            {[
-              { title: "Fade the crowd", color: T.red, desc: "When 70%+ of retail is long, go short. Institutions know where retail stops are and deliberately push price to trigger them before the real move." },
-              { title: "Squeeze fuel", color: T.amber, desc: "Heavy short positioning (30%< long) creates upside fuel. A short squeeze happens when price rises and forces shorts to cover — accelerating the move." },
-              { title: "Confirm with COT", color: T.purple, desc: "Sentiment is most powerful when it aligns with institutional COT positioning. Retail crowded short + institutions net long = very high conviction buy." },
-              { title: "Ignore near 50/50", color: T.textM, desc: "Near-neutral sentiment gives no edge. When retail is split evenly, there's no crowd to fade. Rely entirely on price action and COT in this case." },
-            ].map((c, i) => (
-              <div key={i} style={{ background: T.bg, borderRadius: 10, padding: 14, borderLeft: `3px solid ${c.color}` }}>
-                <div style={{ fontSize: 13, fontWeight: 700, color: c.color, marginBottom: 6 }}>{c.title}</div>
-                <div style={{ fontSize: 12, color: T.textM, lineHeight: 1.6 }}>{c.desc}</div>
-              </div>
-            ))}
-          </div>
-          <div style={{ padding: "12px 16px", background: T.bg, borderRadius: 8, border: `1px solid ${T.border}`, fontSize: 12, color: T.textM, lineHeight: 1.7 }}>
-            <strong style={{ color: T.text }}>Key rule:</strong> Never trade sentiment alone. Use it as a <em>filter</em> — when sentiment is extreme AND technicals align AND COT confirms, your probability of success is significantly higher. Sentiment alone without confirmation leads to premature entries against a trend that still has momentum.
-          </div>
-        </div>
-      </>
-    );
-  };
-
-  const renderOrderFlow = () => (<>
-    <div style={s.g4}>
-      <MetricCard label="NY cut time" value="10:00 ET" sub="5:00 PM EAT" subColor={T.cyan} icon={Clock}/>
-      <MetricCard label="Active expiries" value={String(OPTION_EXPIRIES.entries.length)} sub={OPTION_EXPIRIES.date} icon={Layers}/>
-      <MetricCard label="High impact" value={String(OPTION_EXPIRIES.entries.filter(e=>e.significance==="high").length)} sub="watch closely" subColor={T.amber} icon={Target}/>
-      <MetricCard label="Source" value="IL / FL" sub="InvestingLive" subColor={T.cyan} icon={Radio}/>
-    </div>
-    <Tip text="FX option expiries are contracts that expire at 10:00 AM New York time (5:00 PM East Africa Time). Large expiries act as 'magnets' — price gravitates toward these strike levels before the cut, especially when the strike aligns with a moving average. After the cut, the magnet disappears and price often breaks out sharply." />
-    <div style={s.cd}>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
-        <div style={s.ct}><Layers size={14}/>NY cut option expiries — {OPTION_EXPIRIES.date}</div>
-        <button onClick={fetchOpt} disabled={optLoading} style={{...s.btn(T.accent,"#fff"),opacity:optLoading?0.6:1}}><RefreshCw size={13} style={optLoading?{animation:"spin 1s linear infinite"}:{}}/>{optLoading?"Fetching...":"Refresh from InvestingLive"}</button>
-        <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
-      </div>
-      <div style={{fontSize:12,color:T.textM,marginBottom:14,padding:"10px 14px",background:T.bg,borderRadius:8,borderLeft:`3px solid ${T.cyan}`,lineHeight:1.6}}><strong style={{color:T.cyan}}>Context: </strong>{OPTION_EXPIRIES.context}</div>
-      {OPTION_EXPIRIES.entries.map((e,i) => (
-        <div key={i} style={{display:"grid",gridTemplateColumns:"80px 1fr 1fr auto",alignItems:"center",gap:14,padding:"14px 16px",background:T.bg,borderRadius:10,marginBottom:8,border:`1px solid ${e.significance==="high"?T.cyanBd:T.border}`}}>
-          <div><div style={{fontSize:14,fontWeight:700,color:T.cyan}}>{e.pair}</div><div style={{fontSize:10,color:T.textD,marginTop:2}}>{e.notional}</div></div>
-          <div>
-            <div style={{display:"flex",alignItems:"baseline",gap:8}}><span style={{fontSize:20,fontWeight:700,fontFamily:"'JetBrains Mono',monospace"}}>{e.strike}</span><span style={{fontSize:10,padding:"2px 8px",borderRadius:4,fontWeight:600,background:e.significance==="high"?T.cyanBg:T.amberBg,color:e.significance==="high"?T.cyan:T.amber}}>{e.significance}</span></div>
-            <div style={{fontSize:11,color:T.textD,marginTop:2}}>Tech: {e.techLevel}</div>
-          </div>
-          <div style={{fontSize:12,color:T.textM,lineHeight:1.5}}>{e.notes}</div>
-          <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:2}}><div style={{width:12,height:12,borderRadius:6,background:e.proximity==="close"?T.cyan:T.amber,boxShadow:e.proximity==="close"?`0 0 8px ${T.cyan}`:"none"}}/><span style={{fontSize:9,color:T.textD}}>{e.proximity}</span></div>
-        </div>
-      ))}
-      {optData?.entries?.length > 0 && (<div style={{marginTop:16,padding:14,background:T.purpleBg,border:`1px solid ${T.purpleBd}`,borderRadius:10}}><div style={{fontSize:12,fontWeight:600,color:T.accent,marginBottom:8}}>AI-refreshed ({optData.date})</div>{optData.entries.map((e,i)=>(<div key={i} style={{fontSize:12,color:T.text,marginBottom:4}}><strong>{e.pair}</strong> @ {e.strike} {e.notional&&`(${e.notional})`} — {e.notes||e.significance}</div>))}{optData.marketContext&&<div style={{fontSize:11,color:T.textM,marginTop:8}}>{optData.marketContext}</div>}</div>)}
-    </div>
-    <div style={{...s.cd,marginTop:18}}>
-      <div style={s.ct}><Clock size={14}/>Recent expiry history</div>
-      {OPTION_EXPIRIES.historicalExpiries.map((d,i)=>(<div key={i} style={{marginBottom:10}}><div style={{fontSize:12,fontWeight:600,color:T.textM,marginBottom:4}}>{d.date}</div>{d.entries.map((e,j)=>(<div key={j} style={{fontSize:12,color:T.textD,paddingLeft:12,borderLeft:`2px solid ${T.border}`,marginBottom:3,lineHeight:1.5}}><span style={{color:T.cyan,fontWeight:600}}>{e.pair}</span> {e.strike&&`@ ${e.strike}`} — {e.note}</div>))}</div>))}
-    </div>
-    <div style={{...s.cd,marginTop:18}}>
-      <div style={s.ct}><Brain size={14}/>How to trade FX option expiries</div>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12}}>
-        {[
-          {title:"Pre-expiry magnet",time:"London → NY open",desc:"Price gravitates toward large strikes in the hours before 10AM NY cut. Trade toward strike when spot is within 30-50 pips.",color:T.cyan},
-          {title:"Pin & release",time:"Post 10AM NY",desc:"Once expiry passes, the 'magnet' dissolves. Price is freed and often breaks sharply. Set up breakout entries post-cut.",color:T.amber},
-          {title:"Strike + tech confluence",time:"Any time",desc:"When strike aligns with key MA or S/R level, the magnet effect is amplified. These are the highest probability setups.",color:T.green},
-        ].map((x,i)=>(<div key={i} style={{background:T.bg,borderRadius:10,padding:14,borderTop:`3px solid ${x.color}`}}><div style={{fontSize:13,fontWeight:600,color:x.color,marginBottom:2}}>{x.title}</div><div style={{fontSize:10,color:T.textD,marginBottom:8,textTransform:"uppercase"}}>{x.time}</div><div style={{fontSize:12,color:T.textM,lineHeight:1.6}}>{x.desc}</div></div>))}
-      </div>
-      <div style={{marginTop:14,fontSize:11,color:T.textD,display:"flex",alignItems:"center",gap:6}}>
-        <ExternalLink size={12}/> Source: <a href="https://investinglive.com/Orders" target="_blank" rel="noopener" style={{color:T.cyan,textDecoration:"none"}}>InvestingLive (formerly ForexLive)</a> · Published daily before NY cut · 10:00 AM ET = 5:00 PM EAT
-      </div>
-    </div>
-    {(()=>{ const oo = OPTIONS_OI.instruments[sel]; if (!oo || !oo.putCallRatio) return null; return (<>
-    <div style={{...s.cd,marginTop:18}}>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
-        <div style={s.ct}><BarChart3 size={14}/>Options open interest & put/call ratio — {sel}</div>
-      <Tip text="The put/call ratio compares bearish bets (puts) to bullish bets (calls). Below 1.0 = more calls = bullish market. Above 1.0 = more puts = bearish market. 'Max pain' is the strike price where option writers (banks) make the most money — price often gravitates here near expiry. The OI bars below show where the biggest bets are clustered — call walls act as resistance, put walls act as support." />
-        <div style={{fontSize:10,color:T.blue,fontWeight:600}}>CME + Investing.com</div>
-      </div>
-      <div style={{display:"grid",gridTemplateColumns:"repeat(4,minmax(0,1fr))",gap:10,marginBottom:16}}>
-        <div style={{background:T.bg,borderRadius:8,padding:12,textAlign:"center"}}><div style={{fontSize:10,color:T.textD,textTransform:"uppercase"}}>Put/call ratio</div><div style={{fontSize:22,fontWeight:700,fontFamily:"'JetBrains Mono',monospace",marginTop:4,color:oo.putCallRatio<0.7?T.green:oo.putCallRatio>1.2?T.red:T.amber}}>{oo.putCallRatio.toFixed(2)}</div><div style={{fontSize:10,color:T.textD,marginTop:2}}>{oo.putCallRatio<0.7?"Bullish skew":oo.putCallRatio>1.2?"Bearish skew":"Neutral"}</div></div>
-        <div style={{background:T.bg,borderRadius:8,padding:12,textAlign:"center"}}><div style={{fontSize:10,color:T.textD,textTransform:"uppercase"}}>Max pain strike</div><div style={{fontSize:18,fontWeight:700,fontFamily:"'JetBrains Mono',monospace",marginTop:4,color:T.amber}}>{oo.maxPainStrike}</div><div style={{fontSize:10,color:T.textD,marginTop:2}}>magnet zone</div></div>
-        <div style={{background:T.bg,borderRadius:8,padding:12,textAlign:"center"}}><div style={{fontSize:10,color:T.textD,textTransform:"uppercase"}}>30d implied vol</div><div style={{fontSize:22,fontWeight:700,fontFamily:"'JetBrains Mono',monospace",marginTop:4,color:T.text}}>{oo.iv30d}%</div><div style={{fontSize:10,color:oo.ivChange>0?T.red:T.green,marginTop:2}}>{oo.ivChange>0?"+":""}{oo.ivChange}% chg</div></div>
-        <div style={{background:T.bg,borderRadius:8,padding:12,textAlign:"center"}}><div style={{fontSize:10,color:T.textD,textTransform:"uppercase"}}>Options OI</div><div style={{fontSize:22,fontWeight:700,fontFamily:"'JetBrains Mono',monospace",marginTop:4,color:T.text}}>{fmt(oo.optionsOI)}</div><div style={{fontSize:10,color:T.textD,marginTop:2}}>contracts</div></div>
-      </div>
-      <div style={s.ct}><Target size={14}/>Open interest by strike (call wall / put wall)</div>
-      <div style={{display:"grid",gap:6}}>
-        {oo.topStrikes.map((st,i)=>{
-          const maxOI = Math.max(...oo.topStrikes.map(x=>Math.max(x.callOI,x.putOI)));
-          const callW = (st.callOI/maxOI)*100;
-          const putW = (st.putOI/maxOI)*100;
-          return (<div key={i} style={{display:"grid",gridTemplateColumns:"80px 1fr 40px 1fr 50px",alignItems:"center",gap:8,padding:"6px 0"}}>
-            <div style={{fontSize:12,fontWeight:600,fontFamily:"'JetBrains Mono',monospace",color:st.type==="maxpain"?T.amber:st.type==="target"?T.green:st.type==="support"?T.blue:T.text}}>{st.strike}</div>
-            <div style={{display:"flex",justifyContent:"flex-end"}}><div style={{height:16,borderRadius:"4px 0 0 4px",background:`linear-gradient(270deg,${T.green},rgba(16,185,129,0.3))`,width:`${callW}%`,minWidth:2,transition:"width 0.5s"}}></div></div>
-            <div style={{textAlign:"center",fontSize:10,color:T.textD}}>strike</div>
-            <div><div style={{height:16,borderRadius:"0 4px 4px 0",background:`linear-gradient(90deg,${T.red},rgba(239,68,68,0.3))`,width:`${putW}%`,minWidth:2,transition:"width 0.5s"}}></div></div>
-            <div style={{fontSize:10,color:T.textD,textAlign:"right"}}>
-              <span style={{color:T.green}}>{fmt(st.callOI)}</span>/<span style={{color:T.red}}>{fmt(st.putOI)}</span>
-            </div>
-          </div>);
-        })}
-        <div style={{display:"flex",gap:16,fontSize:10,color:T.textD,marginTop:4}}><span><span style={{color:T.green}}>■</span> Call OI</span><span><span style={{color:T.red}}>■</span> Put OI</span><span><span style={{color:T.amber}}>■</span> Max pain</span></div>
-      </div>
-      <div style={{marginTop:14,padding:"10px 14px",background:oo.putCallRatio<0.7?T.greenBg:oo.putCallRatio>1.2?T.redBg:T.amberBg,border:`1px solid ${oo.putCallRatio<0.7?T.greenBd:oo.putCallRatio>1.2?T.redBd:T.amberBd}`,borderRadius:8,fontSize:12,color:T.text,lineHeight:1.6}}>
-        <strong style={{color:oo.putCallRatio<0.7?T.green:oo.putCallRatio>1.2?T.red:T.amber}}>Signal: </strong>{oo.signal}
-      </div>
-    </div>
-    <div style={{...s.cd,marginTop:18}}>
-      <div style={s.ct}><Activity size={14}/>Put/call ratio trend (6 weeks)</div>
-      <ResponsiveContainer width="100%" height={180}>
-        <LineChart data={OPTIONS_OI.pcRatioHistory}><CartesianGrid stroke={T.border} strokeDasharray="3 3"/><XAxis dataKey="w" tick={{fill:T.textD,fontSize:10}}/><YAxis tick={{fill:T.textD,fontSize:10}} domain={[0.3,1.5]}/><Tooltip contentStyle={{background:T.bg3,border:`1px solid ${T.border}`,borderRadius:8,fontSize:11}}/>
-          {sel==="XAUUSD"&&<Line dataKey="xau" stroke={T.green} strokeWidth={2} dot={{r:3}} name="XAUUSD PCR"/>}
-          {sel==="GBPUSD"&&<Line dataKey="gbp" stroke={T.red} strokeWidth={2} dot={{r:3}} name="GBPUSD PCR"/>}
-          {sel==="BTCUSD"&&<Line dataKey="btc" stroke={T.amber} strokeWidth={2} dot={{r:3}} name="BTCUSD PCR"/>}
-          <Line dataKey={() => 1.0} stroke={T.textD} strokeDasharray="5 5" strokeWidth={1} dot={false} name="Neutral (1.0)"/>
-        </LineChart>
-      </ResponsiveContainer>
-      <div style={{fontSize:11,color:T.textM,marginTop:8}}>PCR below 1.0 = more calls than puts (bullish). Above 1.0 = more puts than calls (bearish). Extremes ({`<0.5 or >1.3`}) are contrarian reversal signals.</div>
-    </div>
-    <div style={{marginTop:14,fontSize:11,color:T.textD,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
-      <ExternalLink size={12}/> Sources: <a href="https://www.investing.com/currencies/forex-options" target="_blank" rel="noopener" style={{color:T.blue,textDecoration:"none"}}>Investing.com FX Options</a> · <a href="https://www.cmegroup.com/tools-information/quikstrike/open-interest-heatmap.html" target="_blank" rel="noopener" style={{color:T.blue,textDecoration:"none"}}>CME OI Heatmap</a> · <a href="https://www.barchart.com/forex/quotes/%5EEURUSD/options" target="_blank" rel="noopener" style={{color:T.blue,textDecoration:"none"}}>Barchart FX Options</a>
-    </div>
-    </>); })()}
-    {(()=>{ const vd = VOL_DATA.instruments[sel]; if (!vd) return null; return (<>
-    <div style={{...s.cd,marginTop:18}}>
-      <div style={s.ct}><Activity size={14}/>Volatility dashboard — {sel}</div>
-      <Tip text="Implied volatility (IV) is the market's forecast of future price movement — think of it as the 'fear meter.' IV rank (0-100) tells you if current vol is high or low relative to the past year. The gap between IV and realized vol (RV) shows whether options are overpriced. Risk reversal shows whether puts or calls are more expensive — revealing directional skew." />
-      <div style={{display:"grid",gridTemplateColumns:"repeat(4,minmax(0,1fr))",gap:10,marginBottom:16}}>
-        <div style={{background:T.bg,borderRadius:8,padding:12,textAlign:"center"}}><div style={{fontSize:10,color:T.textD,textTransform:"uppercase"}}>VIX (market fear)</div><div style={{fontSize:22,fontWeight:700,fontFamily:"'JetBrains Mono',monospace",marginTop:4,color:VOL_DATA.vix.current>25?T.red:VOL_DATA.vix.current>20?T.amber:T.green}}>{VOL_DATA.vix.current}</div><div style={{fontSize:10,color:VOL_DATA.vix.change>0?T.red:T.green,marginTop:2}}>{VOL_DATA.vix.change>0?"+":""}{VOL_DATA.vix.change} ({VOL_DATA.vix.regime})</div></div>
-        <div style={{background:T.bg,borderRadius:8,padding:12,textAlign:"center"}}><div style={{fontSize:10,color:T.textD,textTransform:"uppercase"}}>{sel} 30d IV</div><div style={{fontSize:22,fontWeight:700,fontFamily:"'JetBrains Mono',monospace",marginTop:4,color:T.text}}>{vd.cvol}%</div><div style={{fontSize:10,color:T.textD,marginTop:2}}>1w: {vd.cvol1w}% · 1m: {vd.cvol1m}%</div></div>
-        <div style={{background:T.bg,borderRadius:8,padding:12,textAlign:"center"}}><div style={{fontSize:10,color:T.textD,textTransform:"uppercase"}}>IV rank / percentile</div><div style={{fontSize:22,fontWeight:700,fontFamily:"'JetBrains Mono',monospace",marginTop:4,color:vd.ivRank>70?T.red:vd.ivRank>40?T.amber:T.green}}>{vd.ivRank}</div><div style={{fontSize:10,color:T.textD,marginTop:2}}>pctl: {vd.ivPercentile}</div></div>
-        <div style={{background:T.bg,borderRadius:8,padding:12,textAlign:"center"}}><div style={{fontSize:10,color:T.textD,textTransform:"uppercase"}}>IV premium</div><div style={{fontSize:22,fontWeight:700,fontFamily:"'JetBrains Mono',monospace",marginTop:4,color:vd.ivPremium>5?T.amber:T.green}}>+{vd.ivPremium}%</div><div style={{fontSize:10,color:T.textD,marginTop:2}}>IV {vd.cvol}% vs RV {vd.realizedVol}%</div></div>
-      </div>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:16}}>
-        <div style={{background:T.bg,borderRadius:10,padding:14}}>
-          <div style={{fontSize:11,fontWeight:600,color:T.textM,textTransform:"uppercase",marginBottom:10}}>Skew & term structure</div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-            <div><div style={{fontSize:10,color:T.textD}}>25-delta risk reversal</div><div style={{fontSize:18,fontWeight:700,fontFamily:"'JetBrains Mono',monospace",color:vd.riskReversal25d<0?T.green:T.red,marginTop:2}}>{vd.riskReversal25d>0?"+":""}{vd.riskReversal25d}</div><div style={{fontSize:10,color:T.textD,marginTop:2}}>{vd.riskReversal25d<0?"Calls pricier (bullish)":"Puts pricier (bearish)"}</div></div>
-            <div><div style={{fontSize:10,color:T.textD}}>Term structure</div><div style={{fontSize:18,fontWeight:700,color:vd.termStructure==="Backwardation"?T.amber:vd.termStructure==="Contango"?T.blue:T.textM,marginTop:2}}>{vd.termStructure}</div><div style={{fontSize:10,color:T.textD,marginTop:2}}>{vd.termStructure==="Backwardation"?"Near-term fear > long-term":vd.termStructure==="Contango"?"Long-term risk > near":"Flat — no strong view"}</div></div>
-          </div>
-        </div>
-        <div style={{background:T.bg,borderRadius:10,padding:14}}>
-          <div style={{fontSize:11,fontWeight:600,color:T.textM,textTransform:"uppercase",marginBottom:6}}>IV vs realized vol (8w)</div>
-          <ResponsiveContainer width="100%" height={100}>
-            <AreaChart data={vd.volHistory}><XAxis dataKey="w" hide/><YAxis tick={{fill:T.textD,fontSize:9}} domain={['dataMin-2','dataMax+2']}/><Tooltip contentStyle={{background:T.bg3,border:`1px solid ${T.border}`,borderRadius:6,fontSize:10}}/>
-              <Area dataKey="iv" fill="rgba(245,158,11,0.15)" stroke={T.amber} strokeWidth={2} name="Implied"/>
-              <Area dataKey="rv" fill="rgba(16,185,129,0.1)" stroke={T.green} strokeWidth={1.5} strokeDasharray="4 3" name="Realized"/>
-            </AreaChart>
-          </ResponsiveContainer>
-          <div style={{display:"flex",gap:12,fontSize:10,color:T.textD,marginTop:4}}><span><span style={{color:T.amber}}>—</span> Implied</span><span><span style={{color:T.green}}>---</span> Realized</span><span>Gap = premium</span></div>
-        </div>
-      </div>
-      <div style={{padding:"12px 16px",background:vd.ivRank>70?T.redBg:vd.ivRank>50?T.amberBg:T.greenBg,border:`1px solid ${vd.ivRank>70?T.redBd:vd.ivRank>50?T.amberBd:T.greenBd}`,borderRadius:8,fontSize:13,color:T.text,lineHeight:1.7}}>
-        <strong style={{color:vd.ivRank>70?T.red:vd.ivRank>50?T.amber:T.green}}>Volatility call: </strong>{vd.volCall}
-      </div>
-    </div>
-    </>); })()}
-  </>);
 
   // ── Trade Lab ─────────────────────────────────────────────────────────────
   const renderTradeLab = () => {
@@ -1681,13 +1948,6 @@ Return ONLY valid JSON (no markdown):
       </button>
     );
 
-    const PatternBadge = ({ label, color, sub }) => (
-      <div style={{ display: "inline-flex", flexDirection: "column", alignItems: "center", padding: "6px 10px", borderRadius: 8, background: `${color}15`, border: `1px solid ${color}40`, gap: 2 }}>
-        <span style={{ fontSize: 11, fontWeight: 700, color, letterSpacing: 0.3 }}>{label}</span>
-        {sub && <span style={{ fontSize: 9, color: `${color}99`, textTransform: "uppercase" }}>{sub}</span>}
-      </div>
-    );
-
     // ── Scanner tab: all instruments overview ────────────────────────────
     const renderScanner = () => {
       const allKeys = Object.keys(INSTRUMENTS).filter(k => intelData?.instruments?.[k]);
@@ -1723,13 +1983,13 @@ Return ONLY valid JSON (no markdown):
                 const lastSweep = sm?.liquiditySweeps?.slice(-1)[0];
                 if (lastSweep) patterns.push({ label: lastSweep.type === "bullish" ? "Sweep ↑" : "Sweep ↓", color: lastSweep.type === "bullish" ? T.cyan : T.amber });
                 return (
-                  <div key={k} onClick={() => { setSel(k); setLabTab("builder"); }} style={{ background: T.bg2, borderRadius: 12, padding: "14px 18px", border: `1px solid ${ts >= 62 ? g.bd : T.border}`, cursor: "pointer", display: "grid", gridTemplateColumns: "120px 1fr auto", gap: 16, alignItems: "center" }}>
+                  <div key={k} onClick={() => { setSel(k); setLabTab("builder"); }} className="scanner-card" style={{ background: T.bg2, borderRadius: 12, padding: "14px 18px", border: `1px solid ${ts >= 62 ? g.bd : T.border}`, cursor: "pointer", display: "grid", gridTemplateColumns: "120px 1fr auto", gap: 16, alignItems: "center" }}>
                     <div>
                       <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 2 }}>{k}</div>
                       <div style={{ fontSize: 10, color: T.textD }}>{INSTRUMENTS[k].label}</div>
                       <div style={{ fontSize: 11, fontWeight: 700, color: d.trend === "BULLISH" ? T.green : d.trend === "BEARISH" ? T.red : T.amber, marginTop: 4 }}>{d.trend}</div>
                     </div>
-                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                    <div className="scanner-patterns" style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
                       {patterns.length > 0 ? patterns.map((p, i) => (
                         <span key={i} style={{ fontSize: 10, fontWeight: 700, padding: "3px 8px", borderRadius: 5, background: `${p.color}15`, color: p.color, border: `1px solid ${p.color}30` }}>{p.label}</span>
                       )) : <span style={{ fontSize: 11, color: T.textD }}>No active SMC patterns</span>}
@@ -1755,7 +2015,6 @@ Return ONLY valid JSON (no markdown):
 
       // Auto trade plan from SMC
       const signal = instData?.signal;
-      const atr = instData?.atr;
       const current = instData?.current;
 
       // Primary OB for entry
@@ -1821,11 +2080,11 @@ Return ONLY valid JSON (no markdown):
                 </div>
                 <div style={{ background: T.bg, borderRadius: 8, padding: "10px 12px" }}>
                   <div style={{ fontSize: 9, color: T.textD, textTransform: "uppercase", marginBottom: 4 }}>Last swing low</div>
-                  <div style={{ fontSize: 15, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", color: T.green }}>{smc.lastSwingLow ? fp(smc.lastSwingLow) : "—"}</div>
+                  <div style={{ fontSize: 15, fontWeight: 700, fontFamily: "var(--font-geist-mono), monospace", color: T.green }}>{smc.lastSwingLow ? fp(smc.lastSwingLow) : "—"}</div>
                 </div>
                 <div style={{ background: T.bg, borderRadius: 8, padding: "10px 12px" }}>
                   <div style={{ fontSize: 9, color: T.textD, textTransform: "uppercase", marginBottom: 4 }}>Current price</div>
-                  <div style={{ fontSize: 15, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", color: T.text }}>{fp(current)}</div>
+                  <div style={{ fontSize: 15, fontWeight: 700, fontFamily: "var(--font-geist-mono), monospace", color: T.text }}>{fp(current)}</div>
                 </div>
               </div>
               {smc.bos && <div style={{ padding: "10px 14px", borderRadius: 8, background: smc.bos.type === "bullish" ? T.greenBg : T.redBg, border: `1px solid ${smc.bos.type === "bullish" ? T.greenBd : T.redBd}`, marginBottom: 8 }}>
@@ -1884,7 +2143,7 @@ Return ONLY valid JSON (no markdown):
                     {ob.note && <div style={{ fontSize: 10, color: T.textM, marginTop: 2 }}>{ob.note}</div>}
                   </div>
                   <div style={{ textAlign: "right" }}>
-                    <div style={{ fontSize: 12, fontWeight: 600, fontFamily: "'JetBrains Mono',monospace", color: ob.color }}>mid {fp(ob.mid)}</div>
+                    <div style={{ fontSize: 12, fontWeight: 600, fontFamily: "var(--font-geist-mono), monospace", color: ob.color }}>mid {fp(ob.mid)}</div>
                   </div>
                 </div>
               )) : <div style={{ fontSize: 11, color: T.textD }}>No significant order blocks detected in the lookback window.</div>}
@@ -1954,7 +2213,7 @@ Return ONLY valid JSON (no markdown):
                 ].map(item => (
                   <div key={item.l} style={{ background: T.bg, borderRadius: 8, padding: "10px 12px", textAlign: "center" }}>
                     <div style={{ fontSize: 9, color: T.textD, textTransform: "uppercase", marginBottom: 4 }}>{item.l}</div>
-                    <div style={{ fontSize: 13, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", color: item.color }}>{item.v}</div>
+                    <div style={{ fontSize: 13, fontWeight: 700, fontFamily: "var(--font-geist-mono), monospace", color: item.color }}>{item.v}</div>
                   </div>
                 ))}
               </div>
@@ -1974,59 +2233,347 @@ Return ONLY valid JSON (no markdown):
     const renderSignalsTab = () => {
       const openSigs = signals.filter(sg => sg.status === "OPEN");
       const closedSigs = signals.filter(sg => sg.status === "CLOSED");
-      const wins = closedSigs.filter(sg => (calcPnL(sg, liveData) || 0) > 0).length;
-      const winRate = closedSigs.length > 0 ? ((wins / closedSigs.length) * 100).toFixed(0) : null;
+      const aClosedSigs = closedSigs.filter(sg => sg.grade === "A");
+      const wins = closedSigs.filter(sg => sg.result === "WIN").length;
+      const aWins = aClosedSigs.filter(sg => sg.result === "WIN").length;
+      const winRate = closedSigs.length > 0 ? Math.round((wins / closedSigs.length) * 100) : null;
+      const aWinRate = aClosedSigs.length > 0 ? Math.round((aWins / aClosedSigs.length) * 100) : null;
       const totalClosedPnL = closedSigs.reduce((acc, sg) => acc + (calcPnL(sg, liveData) || 0), 0);
       const openPnL = openSigs.reduce((acc, sg) => acc + (calcPnL(sg, liveData) || 0), 0);
       const equityCurve = closedSigs.slice().sort((a, b) => new Date(a.closedAt) - new Date(b.closedAt)).reduce((acc, sg, i) => {
         const prev = acc[i - 1]?.cumPnL || 0;
         const pnl = calcPnL(sg, liveData) || 0;
-        acc.push({ label: new Date(sg.closedAt).toLocaleDateString("en-GB", { day: "2-digit", month: "short" }), cumPnL: parseFloat((prev + pnl).toFixed(2)), pnl: parseFloat(pnl.toFixed(2)) });
+        acc.push({ label: new Date(sg.closedAt).toLocaleDateString("en-GB", { day: "2-digit", month: "short" }), cumPnL: parseFloat((prev + pnl).toFixed(2)), pnl: parseFloat(pnl.toFixed(2)), result: sg.result });
         return acc;
       }, []);
-      const pnlColor = v => v >= 0 ? T.green : T.red;
-      const inp = { background: T.bg, border: `1px solid ${T.border}`, color: T.text, fontSize: 12, padding: "7px 10px", borderRadius: 7, width: "100%" };
+      const pc = v => v >= 0 ? T.green : T.red;
+      const inp = { background: T.bg, border: `1px solid ${T.border}`, color: T.text, fontSize: 12, padding: "8px 10px", borderRadius: 8, width: "100%", outline: "none" };
+      const lbl = { fontSize: 10, color: T.textD, display: "block", marginBottom: 4, textTransform: "uppercase", letterSpacing: 0.5, fontWeight: 600 };
+
+      const fmtPrice = (sg, v) => v == null ? "—" : sg.instrument === "BTCUSD" ? Math.round(v).toLocaleString() : sg.instrument.includes("JPY") ? Number(v).toFixed(3) : Number(v).toFixed(5);
+
+      const GradePill = ({ grade, auto }) => {
+        if (!grade) return auto ? <span style={{ fontSize: 9, color: T.textD, padding: "2px 5px", borderRadius: 3, background: T.bg3 }}>auto</span> : null;
+        const gc = grade === "A" ? { bg: T.purpleBg, c: T.purple, bd: T.purpleBd } : { bg: T.cyanBg, c: T.cyan, bd: T.cyanBd };
+        return <span style={{ fontSize: 9, fontWeight: 800, padding: "2px 7px", borderRadius: 4, background: gc.bg, color: gc.c, border: `1px solid ${gc.bd}`, letterSpacing: 0.5 }}>{grade}{auto ? " auto" : ""}</span>;
+      };
+
+      const StatCard = ({ label, value, sub, color }) => (
+        <div style={{ background: T.bg2, borderRadius: 14, padding: "16px 18px", border: `1px solid ${T.border}` }}>
+          <div style={{ fontSize: 10, color: T.textD, textTransform: "uppercase", letterSpacing: 0.7, marginBottom: 6, fontWeight: 600 }}>{label}</div>
+          <div style={{ fontSize: 26, fontWeight: 800, color: color || T.text, lineHeight: 1 }}>{value}</div>
+          {sub && <div style={{ fontSize: 11, color: T.textM, marginTop: 5 }}>{sub}</div>}
+        </div>
+      );
+
       return (
         <>
-          <div style={s.g4}>
-            <div style={s.cd}><div style={{ fontSize: 11, color: T.textD, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 6 }}>Total Signals</div><div style={{ fontSize: 28, fontWeight: 700 }}>{signals.length}</div><div style={{ fontSize: 11, color: T.textM }}>{openSigs.length} open · {closedSigs.length} closed</div></div>
-            <div style={s.cd}><div style={{ fontSize: 11, color: T.textD, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 6 }}>Win Rate</div><div style={{ fontSize: 28, fontWeight: 700, color: winRate >= 50 ? T.green : winRate !== null ? T.red : T.textD }}>{winRate !== null ? winRate + "%" : "—"}</div><div style={{ fontSize: 11, color: T.textM }}>{wins}W / {closedSigs.length - wins}L</div></div>
-            <div style={s.cd}><div style={{ fontSize: 11, color: T.textD, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 6 }}>Closed P&L</div><div style={{ fontSize: 28, fontWeight: 700, color: pnlColor(totalClosedPnL) }}>{totalClosedPnL >= 0 ? "+" : ""}{totalClosedPnL.toFixed(2)}%</div></div>
-            <div style={s.cd}><div style={{ fontSize: 11, color: T.textD, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 6 }}>Open P&L</div><div style={{ fontSize: 28, fontWeight: 700, color: pnlColor(openPnL) }}>{openPnL >= 0 ? "+" : ""}{openPnL.toFixed(2)}%</div></div>
+          {/* ── Stats ── */}
+          <div className="lab-stats" style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 10, marginBottom: 16 }}>
+            <StatCard label="Total Signals" value={signals.length} sub={`${openSigs.length} open · ${closedSigs.length} closed`} />
+            <StatCard label="Win Rate" value={winRate != null ? `${winRate}%` : "—"} sub={`${wins}W / ${closedSigs.length - wins}L`} color={winRate != null ? (winRate >= 50 ? T.green : T.red) : T.textD} />
+            <StatCard label="Closed P&L" value={`${totalClosedPnL >= 0 ? "+" : ""}${totalClosedPnL.toFixed(2)}%`} color={pc(totalClosedPnL)} />
+            <StatCard label="Open P&L" value={`${openPnL >= 0 ? "+" : ""}${openPnL.toFixed(2)}%`} color={pc(openPnL)} />
           </div>
-          <div style={{ ...s.cd, marginTop: 16 }}>
-            <div style={s.ct}><Plus size={14} />Log New Signal</div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 10, marginBottom: 10 }}>
-              <div><label style={{ fontSize: 10, color: T.textD, display: "block", marginBottom: 3 }}>Instrument</label><select value={newSig.instrument} onChange={e => setNewSig({ ...newSig, instrument: e.target.value })} style={inp}>{Object.keys(INSTRUMENTS).map(k => <option key={k}>{k}</option>)}</select></div>
-              <div><label style={{ fontSize: 10, color: T.textD, display: "block", marginBottom: 3 }}>Direction</label><select value={newSig.direction} onChange={e => setNewSig({ ...newSig, direction: e.target.value })} style={inp}><option>Long</option><option>Short</option></select></div>
-              <div><label style={{ fontSize: 10, color: T.textD, display: "block", marginBottom: 3 }}>Bias</label><select value={newSig.bias} onChange={e => setNewSig({ ...newSig, bias: e.target.value })} style={inp}><option>Bullish</option><option>Bearish</option><option>Neutral</option></select></div>
-              <div><label style={{ fontSize: 10, color: T.textD, display: "block", marginBottom: 3 }}>Confidence (1-10)</label><input type="number" min={1} max={10} value={newSig.confidence} onChange={e => setNewSig({ ...newSig, confidence: +e.target.value })} style={inp} /></div>
+
+          {/* ── A-Setup Performance ── */}
+          {aClosedSigs.length > 0 && (
+            <div style={{ background: T.purpleBg, border: `1px solid ${T.purpleBd}`, borderRadius: 14, padding: "14px 18px", marginBottom: 16 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: T.purple, marginBottom: 10, display: "flex", alignItems: "center", gap: 6, textTransform: "uppercase", letterSpacing: 0.7 }}><Zap size={13} />A-Setup Performance</div>
+              <div className="asetup-grid" style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 10 }}>
+                {[["Closed", aClosedSigs.length, T.purple], ["Win Rate", aWinRate != null ? `${aWinRate}%` : "—", aWinRate >= 60 ? T.green : T.amber], ["Open A", openSigs.filter(s => s.grade === "A").length, T.cyan]].map(([l, v, c]) => (
+                  <div key={l}><div style={{ fontSize: 10, color: T.textD, marginBottom: 3 }}>{l}</div><div style={{ fontSize: 22, fontWeight: 700, color: c }}>{v}</div></div>
+                ))}
+                <div><div style={{ fontSize: 10, color: T.textD, marginBottom: 3 }}>W / L</div><div style={{ fontSize: 22, fontWeight: 700 }}><span style={{ color: T.green }}>{aWins}</span><span style={{ color: T.textD, fontSize: 14 }}>/</span><span style={{ color: T.red }}>{aClosedSigs.length - aWins}</span></div></div>
+              </div>
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 10, marginBottom: 10 }}>
-              <div><label style={{ fontSize: 10, color: T.textD, display: "block", marginBottom: 3 }}>Entry Price</label><input type="number" step="any" value={newSig.entryPrice} onChange={e => setNewSig({ ...newSig, entryPrice: e.target.value })} placeholder={liveData[newSig.instrument]?.price || "0"} style={inp} /></div>
-              <div><label style={{ fontSize: 10, color: T.textD, display: "block", marginBottom: 3 }}>Target Price</label><input type="number" step="any" value={newSig.targetPrice} onChange={e => setNewSig({ ...newSig, targetPrice: e.target.value })} style={inp} /></div>
-              <div><label style={{ fontSize: 10, color: T.textD, display: "block", marginBottom: 3 }}>Stop Loss</label><input type="number" step="any" value={newSig.stopLoss} onChange={e => setNewSig({ ...newSig, stopLoss: e.target.value })} style={inp} /></div>
-              <div><label style={{ fontSize: 10, color: T.textD, display: "block", marginBottom: 3 }}>R:R</label><input type="text" value={newSig.riskReward || ""} onChange={e => setNewSig({ ...newSig, riskReward: e.target.value })} placeholder="e.g. 1:2.5" style={inp} /></div>
+          )}
+
+          {/* ── Auto Generator ── */}
+          <div style={{ background: T.bg2, border: `1px solid ${T.purpleBd}`, borderRadius: 14, padding: "14px 18px", marginBottom: 16, display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: T.text, marginBottom: 4, display: "flex", alignItems: "center", gap: 7 }}>
+                <Zap size={14} style={{ color: T.purple }} />Auto A-Setup Generator
+              </div>
+              <div style={{ fontSize: 11, color: T.textM, marginBottom: 4 }}>Turtle Soup · CRT · CHoCH · BOS · SMC OBs · RSI/MACD · COT · Retail Sentiment · Options Flow · auto-scans every 10 min</div>
+              {lastAutoGen && (
+                <div style={{ fontSize: 10, color: lastAutoGen.created.length > 0 ? T.green : T.textD }}>
+                  {lastAutoGen.created.length > 0 ? `✓ ${lastAutoGen.created.length} signal(s): ${lastAutoGen.created.join(", ")}` : "No signals passed quality threshold"}
+                  {lastAutoGen.skipped?.length > 0 && ` · skipped: ${lastAutoGen.skipped.join(", ")}`}
+                  {` · ${new Date(lastAutoGen.ts).toLocaleTimeString()}`}
+                </div>
+              )}
+              <div style={{ fontSize: 10, color: notifPermission === "granted" ? T.green : T.amber, marginTop: 3 }}>
+                {notifPermission === "granted" ? "🔔 Notifications on" : notifPermission === "denied" ? "🔕 Blocked — allow in browser settings" : "🔔 Allow notifications when prompted"}
+              </div>
             </div>
-            <textarea value={newSig.notes} onChange={e => setNewSig({ ...newSig, notes: e.target.value })} placeholder="Trade thesis (SMC setup, COT context, sentiment…)" rows={2} style={{ ...inp, width: "100%", resize: "vertical", marginBottom: 10, fontFamily: "inherit" }} />
-            <button onClick={async () => { if (!newSig.entryPrice) return; await createSignal({ ...newSig, entryPrice: newSig.entryPrice || liveData[newSig.instrument]?.price }); setNewSig({ instrument: "XAUUSD", direction: "Long", entryPrice: "", targetPrice: "", stopLoss: "", confidence: 7, notes: "", bias: "Neutral", riskReward: "", validFor: "", aiSummary: "" }); }} disabled={signalsLoading || !newSig.entryPrice} style={{ ...s.btn(T.accent, "#fff"), opacity: (!newSig.entryPrice || signalsLoading) ? 0.5 : 1 }}><Plus size={13} />{signalsLoading ? "Saving…" : "Log Signal"}</button>
+            <button onClick={() => generateASetups(false)} disabled={autoGenLoading} style={{ display: "flex", alignItems: "center", gap: 6, padding: "10px 20px", borderRadius: 10, background: "linear-gradient(135deg,#8b5cf6,#6366f1)", color: "#fff", fontSize: 13, fontWeight: 700, border: "none", cursor: autoGenLoading ? "not-allowed" : "pointer", opacity: autoGenLoading ? 0.6 : 1, flexShrink: 0 }}>
+              <Zap size={13} />{autoGenLoading ? "Scanning…" : "Scan Now"}
+            </button>
           </div>
-          {userTrades.length > 0 && <div style={{ ...s.cd, marginTop: 16, border: `1px solid ${T.purple}40` }}>
-            <div style={{ ...s.ct, color: T.purple }}><Activity size={14} />Live Session Trades ({userTrades.length})</div>
-            <div style={{ overflowX: "auto" }}><table style={{ ...s.tb, minWidth: 700 }}><thead><tr>{["Pair", "Dir", "Entry", "Current", "Lot", "P&L %", "Opened", ""].map(h => <th key={h} style={s.th}>{h}</th>)}</tr></thead><tbody>{userTrades.map(t => { const cur = liveData[t.instr]?.price; const pnl = cur ? ((cur - t.entry) / t.entry) * 100 * (t.dir === "BUY" ? 1 : -1) : 0; return <tr key={t.id}><td style={{ ...s.td, fontWeight: 700 }}>{t.instr}</td><td style={{ ...s.td, color: t.dir === "BUY" ? T.green : T.red, fontWeight: 600 }}>{t.dir}</td><td style={s.td}>{t.entry}</td><td style={{ ...s.td, color: T.cyan }}>{cur || "—"}</td><td style={s.td}>{t.lot}</td><td style={{ ...s.td, fontWeight: 700, color: pnlColor(pnl) }}>{pnl >= 0 ? "+" : ""}{pnl.toFixed(2)}%</td><td style={{ ...s.td, color: T.textD, fontSize: 11 }}>{new Date(t.timestamp).toLocaleTimeString()}</td><td style={s.td}><button onClick={() => setUserTrades(userTrades.filter(it => it.id !== t.id))} style={{ ...s.btn(T.redBg, T.red), padding: "4px 8px", border: `1px solid ${T.redBd}` }}>Close</button></td></tr>; })}</tbody></table></div>
-          </div>}
-          {openSigs.length > 0 && <div style={{ ...s.cd, marginTop: 16 }}>
-            <div style={s.ct}><Radio size={14} />Open Signals ({openSigs.length})</div>
-            <div style={{ overflowX: "auto" }}><table style={{ ...s.tb, minWidth: 700 }}><thead><tr>{["Pair", "Dir", "Entry", "Current", "Target", "Stop", "P&L %", "Conf", "Logged", ""].map(h => <th key={h} style={s.th}>{h}</th>)}</tr></thead><tbody>{openSigs.map(sg => { const pnl = calcPnL(sg, liveData); const cur = liveData[sg.instrument]?.price; return <tr key={sg.id}><td style={{ ...s.td, fontWeight: 700 }}>{sg.instrument}</td><td style={{ ...s.td, color: sg.direction === "Long" ? T.green : T.red, fontWeight: 600 }}>{sg.direction}</td><td style={s.td}>{sg.entryPrice}</td><td style={{ ...s.td, color: T.cyan }}>{cur || "—"}</td><td style={{ ...s.td, color: T.green }}>{sg.targetPrice || "—"}</td><td style={{ ...s.td, color: T.red }}>{sg.stopLoss || "—"}</td><td style={{ ...s.td, fontWeight: 700, color: pnl === null ? T.text : pnlColor(pnl) }}>{pnl === null ? "—" : `${pnl >= 0 ? "+" : ""}${pnl.toFixed(2)}%`}</td><td style={s.td}>{sg.confidence}/10</td><td style={{ ...s.td, color: T.textD, fontSize: 11 }}>{new Date(sg.createdAt).toLocaleDateString()}</td><td style={s.td}>{closeForm?.id === sg.id ? <div style={{ display: "flex", gap: 4 }}><input type="number" step="any" value={closeForm.exitPrice} onChange={e => setCloseForm({ ...closeForm, exitPrice: e.target.value })} style={{ ...inp, width: 80, padding: "3px 6px" }} /><button onClick={() => closeSignal(sg.id, parseFloat(closeForm.exitPrice))} style={{ ...s.btn(T.green, "#fff"), padding: "3px 8px", fontSize: 11 }}>✓</button><button onClick={() => setCloseForm(null)} style={{ ...s.btn(T.bg3, T.textM), padding: "3px 6px", fontSize: 11 }}>✕</button></div> : <div style={{ display: "flex", gap: 4 }}><button onClick={() => setCloseForm({ id: sg.id, exitPrice: cur || "" })} style={{ ...s.btn(T.amberBg, T.amber), padding: "3px 8px", fontSize: 11, border: `1px solid ${T.amberBd}` }}>Close</button><button onClick={() => deleteSignal(sg.id)} style={{ ...s.btn(T.redBg, T.red), padding: "3px 6px", border: `1px solid ${T.redBd}` }}><Trash2 size={11} /></button></div>}</td></tr>; })}</tbody></table></div>
-          </div>}
-          {equityCurve.length > 1 && <div style={{ ...s.cd, marginTop: 16 }}>
-            <div style={s.ct}><TrendingUp size={14} />Equity Curve</div>
-            <ResponsiveContainer width="100%" height={190}><AreaChart data={equityCurve} margin={{ top: 5, right: 10, bottom: 5, left: 0 }}><defs><linearGradient id="eqGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor={T.green} stopOpacity={0.3} /><stop offset="95%" stopColor={T.green} stopOpacity={0} /></linearGradient></defs><CartesianGrid strokeDasharray="3 3" stroke={T.border} /><XAxis dataKey="label" tick={{ fill: T.textD, fontSize: 10 }} /><YAxis tick={{ fill: T.textD, fontSize: 10 }} tickFormatter={v => `${v > 0 ? "+" : ""}${v}%`} /><Tooltip contentStyle={{ background: T.bg2, border: `1px solid ${T.border}`, borderRadius: 8, fontSize: 12 }} formatter={v => [`${v >= 0 ? "+" : ""}${v}%`, "Cum P&L"]} /><Area type="monotone" dataKey="cumPnL" stroke={T.green} fill="url(#eqGrad)" strokeWidth={2} dot={{ fill: T.green, r: 3 }} /></AreaChart></ResponsiveContainer>
-          </div>}
-          {closedSigs.length > 0 && <div style={{ ...s.cd, marginTop: 16 }}>
-            <div style={s.ct}><BookOpen size={14} />Closed History ({closedSigs.length})</div>
-            <div style={{ overflowX: "auto" }}><table style={{ ...s.tb, minWidth: 700 }}><thead><tr>{["Pair", "Dir", "Entry", "Exit", "P&L %", "R:R", "Conf", "Opened", "Closed", "Bias"].map(h => <th key={h} style={s.th}>{h}</th>)}</tr></thead><tbody>{closedSigs.map(sg => { const pnl = calcPnL(sg, liveData); return <tr key={sg.id} style={{ opacity: 0.85 }}><td style={{ ...s.td, fontWeight: 700 }}>{sg.instrument}</td><td style={{ ...s.td, color: sg.direction === "Long" ? T.green : T.red, fontWeight: 600 }}>{sg.direction}</td><td style={s.td}>{sg.entryPrice}</td><td style={s.td}>{sg.exitPrice || "—"}</td><td style={{ ...s.td, fontWeight: 700, color: pnl === null ? T.textD : pnlColor(pnl) }}>{pnl === null ? "—" : `${pnl >= 0 ? "+" : ""}${pnl.toFixed(2)}%`}</td><td style={s.td}>{sg.riskReward || "—"}</td><td style={s.td}>{sg.confidence}/10</td><td style={{ ...s.td, fontSize: 11, color: T.textD }}>{new Date(sg.createdAt).toLocaleDateString()}</td><td style={{ ...s.td, fontSize: 11, color: T.textD }}>{sg.closedAt ? new Date(sg.closedAt).toLocaleDateString() : "—"}</td><td style={{ ...s.td, color: sg.bias === "Bullish" ? T.green : sg.bias === "Bearish" ? T.red : T.amber, fontSize: 11 }}>{sg.bias || "—"}</td></tr>; })}</tbody></table></div>
-          </div>}
+
+          {/* ── Log New Signal ── */}
+          <div style={{ background: T.bg2, border: `1px solid ${T.border}`, borderRadius: 14, padding: "16px 18px", marginBottom: 16 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: T.text, marginBottom: 14, display: "flex", alignItems: "center", gap: 7, textTransform: "uppercase", letterSpacing: 0.6 }}><Plus size={13} style={{ color: T.accent }} />Log New Signal</div>
+            <div className="lab-form-row" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 10, marginBottom: 10 }}>
+              <div><label style={lbl}>Instrument</label><select value={newSig.instrument} onChange={e => setNewSig({ ...newSig, instrument: e.target.value })} style={inp}>{Object.keys(INSTRUMENTS).map(k => <option key={k}>{k}</option>)}</select></div>
+              <div><label style={lbl}>Direction</label>
+                <div style={{ display: "flex", gap: 6 }}>
+                  {["Long","Short"].map(d => <button key={d} onClick={() => setNewSig({ ...newSig, direction: d })} style={{ flex: 1, padding: "8px 0", borderRadius: 8, border: `1px solid ${newSig.direction === d ? (d === "Long" ? T.green : T.red) : T.border}`, background: newSig.direction === d ? (d === "Long" ? T.greenBg : T.redBg) : T.bg, color: newSig.direction === d ? (d === "Long" ? T.green : T.red) : T.textD, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>{d === "Long" ? "▲ Long" : "▼ Short"}</button>)}
+                </div>
+              </div>
+              <div><label style={lbl}>Bias</label><select value={newSig.bias} onChange={e => setNewSig({ ...newSig, bias: e.target.value })} style={inp}><option>Bullish</option><option>Bearish</option><option>Neutral</option></select></div>
+              <div><label style={lbl}>Confidence (1-10)</label><input type="number" min={1} max={10} value={newSig.confidence} onChange={e => setNewSig({ ...newSig, confidence: +e.target.value })} style={inp} /></div>
+            </div>
+            <div className="lab-form-row" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 10, marginBottom: 10 }}>
+              <div><label style={lbl}>Entry Price</label><input type="number" step="any" value={newSig.entryPrice} onChange={e => setNewSig({ ...newSig, entryPrice: e.target.value })} placeholder={liveData[newSig.instrument]?.price?.toFixed(2) || "0"} style={inp} /></div>
+              <div><label style={lbl}>Target (TP)</label><input type="number" step="any" value={newSig.targetPrice} onChange={e => setNewSig({ ...newSig, targetPrice: e.target.value })} style={inp} /></div>
+              <div><label style={lbl}>Stop Loss (SL)</label><input type="number" step="any" value={newSig.stopLoss} onChange={e => setNewSig({ ...newSig, stopLoss: e.target.value })} style={inp} /></div>
+              <div><label style={lbl}>R:R Ratio</label><input type="text" value={newSig.riskReward || ""} onChange={e => setNewSig({ ...newSig, riskReward: e.target.value })} placeholder="e.g. 1:2.5" style={inp} /></div>
+            </div>
+            <textarea value={newSig.notes} onChange={e => setNewSig({ ...newSig, notes: e.target.value })} placeholder="Trade thesis — SMC setup, COT context, sentiment confluence…" rows={2} style={{ ...inp, resize: "vertical", marginBottom: 12, fontFamily: "inherit" }} />
+            <button
+              onClick={async () => { if (!newSig.entryPrice) return; await createSignal({ ...newSig, entryPrice: newSig.entryPrice || liveData[newSig.instrument]?.price }); setNewSig({ instrument: "XAUUSD", direction: "Long", entryPrice: "", targetPrice: "", stopLoss: "", confidence: 7, notes: "", bias: "Neutral", riskReward: "", validFor: "", aiSummary: "" }); }}
+              disabled={signalsLoading || !newSig.entryPrice}
+              style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "10px 22px", borderRadius: 10, background: !newSig.entryPrice || signalsLoading ? T.bg3 : "linear-gradient(135deg,#8b5cf6,#6366f1)", color: !newSig.entryPrice || signalsLoading ? T.textD : "#fff", fontSize: 13, fontWeight: 700, border: `1px solid ${T.border}`, cursor: !newSig.entryPrice || signalsLoading ? "not-allowed" : "pointer" }}>
+              <Plus size={13} />{signalsLoading ? "Saving…" : "Log Signal"}
+            </button>
+          </div>
+
+          {/* ── Open Signals ── */}
+          {openSigs.length > 0 && (
+            <div style={{ background: T.bg2, border: `1px solid ${T.border}`, borderRadius: 14, padding: "16px 18px", marginBottom: 16 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8, marginBottom: 14 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <div style={{ width: 8, height: 8, borderRadius: 4, background: T.green, animation: "pulse 1.5s infinite" }} />
+                  <span style={{ fontSize: 13, fontWeight: 700, color: T.text }}>Open Signals</span>
+                  <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 10, background: T.bg3, color: T.textM }}>{openSigs.length}</span>
+                  <span style={{ fontSize: 10, color: T.textD }}>· auto-closes on TP/SL hit</span>
+                </div>
+              </div>
+
+              {/* Desktop table */}
+              <div className="sig-table-wrap" style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                  <thead><tr style={{ borderBottom: `1px solid ${T.border}` }}>
+                    {["","Pair","Dir","Entry","Live","Target TP","Stop SL","P&L","Conf","Date",""].map((h,i) => (
+                      <th key={i} style={{ padding: "7px 10px", textAlign: "left", color: T.textD, fontWeight: 500, fontSize: 10, textTransform: "uppercase", letterSpacing: 0.5, whiteSpace: "nowrap" }}>{h}</th>
+                    ))}
+                  </tr></thead>
+                  <tbody>{openSigs.map(sg => {
+                    const cur = getLivePrice(sg.instrument);
+                    const pnl = calcPnL(sg, liveData);
+                    const isLong = sg.direction === "Long";
+                    const slHit = cur && sg.stopLoss && (isLong ? cur <= Number(sg.stopLoss) : cur >= Number(sg.stopLoss));
+                    const tpHit = cur && sg.targetPrice && (isLong ? cur >= Number(sg.targetPrice) : cur <= Number(sg.targetPrice));
+                    const isClosing = closingRef.current.has(sg.id);
+                    const progressToTp = (sg.targetPrice && cur) ? Math.min(100, Math.max(0, Math.abs(cur - sg.entryPrice) / Math.abs(Number(sg.targetPrice) - sg.entryPrice) * 100)) : 0;
+                    const accentColor = slHit ? T.red : tpHit ? T.green : sg.grade === "A" ? T.purple : T.border;
+                    return (
+                      <tr key={sg.id} style={{ borderLeft: `3px solid ${accentColor}`, background: slHit ? "rgba(239,68,68,0.04)" : tpHit ? "rgba(16,185,129,0.04)" : "transparent", opacity: isClosing ? 0.6 : 1 }}>
+                        <td style={{ padding: "10px 10px" }}>
+                          {isClosing ? <span style={{ fontSize: 9, color: T.amber, fontWeight: 700 }}>⏳</span>
+                            : slHit ? <span style={{ fontSize: 9, color: T.red, fontWeight: 800, padding: "2px 6px", borderRadius: 4, background: T.redBg, border: `1px solid ${T.redBd}` }}>✗ SL</span>
+                            : tpHit ? <span style={{ fontSize: 9, color: T.green, fontWeight: 800, padding: "2px 6px", borderRadius: 4, background: T.greenBg, border: `1px solid ${T.greenBd}` }}>✓ TP</span>
+                            : <GradePill grade={sg.grade} auto={sg.autoGenerated} />}
+                        </td>
+                        <td style={{ padding: "10px 10px", fontWeight: 700, color: T.text }}>{sg.instrument}</td>
+                        <td style={{ padding: "10px 10px", fontWeight: 700, color: isLong ? T.green : T.red }}>{isLong ? "▲ Long" : "▼ Short"}</td>
+                        <td style={{ padding: "10px 10px", color: T.textM, fontFamily: "monospace" }}>{fmtPrice(sg, sg.entryPrice)}</td>
+                        <td style={{ padding: "10px 10px", color: T.cyan }}>
+                          {cur != null ? <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                            <span style={{ width: 5, height: 5, borderRadius: 3, background: T.green, display: "inline-block" }} />
+                            {fmtPrice(sg, cur)}
+                          </span> : <span style={{ color: T.textD }}>—</span>}
+                        </td>
+                        <td style={{ padding: "10px 10px" }}>
+                          <div style={{ color: tpHit ? T.green : T.textM, fontWeight: tpHit ? 700 : 400 }}>{fmtPrice(sg, sg.targetPrice)}</div>
+                          {progressToTp > 0 && <div style={{ height: 3, background: T.bg, borderRadius: 2, marginTop: 4, overflow: "hidden", width: 60 }}><div style={{ height: "100%", width: `${progressToTp}%`, background: `linear-gradient(90deg,${T.accent},${T.green})`, borderRadius: 2 }} /></div>}
+                        </td>
+                        <td style={{ padding: "10px 10px", color: slHit ? T.red : T.textM, fontWeight: slHit ? 700 : 400 }}>{fmtPrice(sg, sg.stopLoss)}</td>
+                        <td style={{ padding: "10px 10px", fontWeight: 700, color: pnl == null ? T.textD : pc(pnl) }}>{pnl == null ? "—" : `${pnl >= 0 ? "+" : ""}${pnl.toFixed(2)}%`}</td>
+                        <td style={{ padding: "10px 10px", color: T.textM }}>{sg.confidence}/10</td>
+                        <td style={{ padding: "10px 10px", color: T.textD, fontSize: 11 }}>{new Date(sg.createdAt).toLocaleDateString()}</td>
+                        <td style={{ padding: "10px 10px" }}>
+                          {closeForm?.id === sg.id
+                            ? <div style={{ display: "flex", gap: 4 }}>
+                                <input type="number" step="any" value={closeForm.exitPrice} onChange={e => setCloseForm({ ...closeForm, exitPrice: e.target.value })} style={{ ...inp, width: 80, padding: "3px 6px", fontSize: 11 }} />
+                                <button onClick={() => closeSignal(sg.id, parseFloat(closeForm.exitPrice), parseFloat(closeForm.exitPrice) >= sg.targetPrice ? "WIN" : "LOSS")} style={{ padding: "3px 8px", borderRadius: 6, background: T.greenBg, color: T.green, border: `1px solid ${T.greenBd}`, cursor: "pointer", fontSize: 12 }}>✓</button>
+                                <button onClick={() => setCloseForm(null)} style={{ padding: "3px 6px", borderRadius: 6, background: T.bg3, color: T.textM, border: `1px solid ${T.border}`, cursor: "pointer", fontSize: 12 }}>✕</button>
+                              </div>
+                            : <div style={{ display: "flex", gap: 5 }}>
+                                <button onClick={() => setCloseForm({ id: sg.id, exitPrice: cur || "" })} style={{ padding: "4px 10px", borderRadius: 6, background: T.amberBg, color: T.amber, border: `1px solid ${T.amberBd}`, fontSize: 11, fontWeight: 600, cursor: "pointer" }}>Close</button>
+                                <button onClick={() => deleteSignal(sg.id)} style={{ padding: "4px 7px", borderRadius: 6, background: T.redBg, color: T.red, border: `1px solid ${T.redBd}`, cursor: "pointer", display: "flex", alignItems: "center" }}><Trash2 size={11} /></button>
+                              </div>}
+                        </td>
+                      </tr>
+                    );
+                  })}</tbody>
+                </table>
+              </div>
+
+              {/* Mobile cards */}
+              <div className="sig-cards">
+                {openSigs.map(sg => {
+                  const cur = getLivePrice(sg.instrument);
+                  const pnl = calcPnL(sg, liveData);
+                  const isLong = sg.direction === "Long";
+                  const slHit = cur && sg.stopLoss && (isLong ? cur <= Number(sg.stopLoss) : cur >= Number(sg.stopLoss));
+                  const tpHit = cur && sg.targetPrice && (isLong ? cur >= Number(sg.targetPrice) : cur <= Number(sg.targetPrice));
+                  const isClosing = closingRef.current.has(sg.id);
+                  const progressToTp = (sg.targetPrice && cur) ? Math.min(100, Math.max(0, Math.abs(cur - sg.entryPrice) / Math.abs(Number(sg.targetPrice) - sg.entryPrice) * 100)) : 0;
+                  const accentColor = slHit ? T.red : tpHit ? T.green : sg.grade === "A" ? T.purple : T.borderL;
+                  return (
+                    <div key={sg.id} style={{ background: T.bg, border: `1px solid ${accentColor}`, borderRadius: 12, padding: "14px 16px", marginBottom: 10, opacity: isClosing ? 0.6 : 1 }}>
+                      {/* Card header */}
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <span style={{ fontSize: 14, fontWeight: 800, color: T.text }}>{sg.instrument}</span>
+                          <span style={{ fontSize: 11, fontWeight: 700, padding: "3px 8px", borderRadius: 6, background: isLong ? T.greenBg : T.redBg, color: isLong ? T.green : T.red, border: `1px solid ${isLong ? T.greenBd : T.redBd}` }}>{isLong ? "▲ Long" : "▼ Short"}</span>
+                          <GradePill grade={sg.grade} auto={sg.autoGenerated} />
+                        </div>
+                        <div style={{ textAlign: "right" }}>
+                          {isClosing ? <span style={{ fontSize: 11, color: T.amber, fontWeight: 700 }}>⏳ Closing…</span>
+                            : slHit ? <span style={{ fontSize: 11, fontWeight: 800, color: T.red, padding: "3px 8px", borderRadius: 5, background: T.redBg }}>✗ SL HIT</span>
+                            : tpHit ? <span style={{ fontSize: 11, fontWeight: 800, color: T.green, padding: "3px 8px", borderRadius: 5, background: T.greenBg }}>✓ TP HIT</span>
+                            : <span style={{ fontSize: 18, fontWeight: 800, color: pnl == null ? T.textD : pc(pnl) }}>{pnl == null ? "—" : `${pnl >= 0 ? "+" : ""}${pnl.toFixed(2)}%`}</span>}
+                        </div>
+                      </div>
+                      {/* Price row */}
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 10 }}>
+                        {[["Entry", fmtPrice(sg, sg.entryPrice), T.textM], ["Live", fmtPrice(sg, cur), T.cyan], ["P&L", pnl == null ? "—" : `${pnl >= 0 ? "+" : ""}${pnl.toFixed(2)}%`, pnl == null ? T.textD : pc(pnl)]].map(([label, val, color]) => (
+                          <div key={label} style={{ background: T.bg2, borderRadius: 8, padding: "8px 10px" }}>
+                            <div style={{ fontSize: 9, color: T.textD, marginBottom: 3, textTransform: "uppercase" }}>{label}</div>
+                            <div style={{ fontSize: 12, fontWeight: 700, color }}>{val}</div>
+                          </div>
+                        ))}
+                      </div>
+                      {/* TP / SL row */}
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
+                        <div style={{ background: T.bg2, borderRadius: 8, padding: "8px 10px" }}>
+                          <div style={{ fontSize: 9, color: T.textD, marginBottom: 3 }}>TARGET TP</div>
+                          <div style={{ fontSize: 12, fontWeight: 700, color: tpHit ? T.green : T.textM }}>{fmtPrice(sg, sg.targetPrice)}</div>
+                          {progressToTp > 0 && <div style={{ height: 3, background: T.bg, borderRadius: 2, marginTop: 5, overflow: "hidden" }}><div style={{ height: "100%", width: `${progressToTp}%`, background: `linear-gradient(90deg,${T.accent},${T.green})` }} /></div>}
+                        </div>
+                        <div style={{ background: T.bg2, borderRadius: 8, padding: "8px 10px" }}>
+                          <div style={{ fontSize: 9, color: T.textD, marginBottom: 3 }}>STOP SL</div>
+                          <div style={{ fontSize: 12, fontWeight: 700, color: slHit ? T.red : T.textM }}>{fmtPrice(sg, sg.stopLoss)}</div>
+                        </div>
+                      </div>
+                      {/* Actions */}
+                      {closeForm?.id === sg.id
+                        ? <div style={{ display: "flex", gap: 6 }}>
+                            <input type="number" step="any" value={closeForm.exitPrice} onChange={e => setCloseForm({ ...closeForm, exitPrice: e.target.value })} style={{ ...inp, flex: 1, fontSize: 13 }} placeholder="Exit price" />
+                            <button onClick={() => closeSignal(sg.id, parseFloat(closeForm.exitPrice), parseFloat(closeForm.exitPrice) >= sg.targetPrice ? "WIN" : "LOSS")} style={{ padding: "8px 14px", borderRadius: 8, background: T.greenBg, color: T.green, border: `1px solid ${T.greenBd}`, fontWeight: 700, cursor: "pointer" }}>✓</button>
+                            <button onClick={() => setCloseForm(null)} style={{ padding: "8px 10px", borderRadius: 8, background: T.bg3, color: T.textM, border: `1px solid ${T.border}`, cursor: "pointer" }}>✕</button>
+                          </div>
+                        : <div style={{ display: "flex", gap: 8 }}>
+                            <button onClick={() => setCloseForm({ id: sg.id, exitPrice: cur || "" })} style={{ flex: 1, padding: "9px 0", borderRadius: 9, background: T.amberBg, color: T.amber, border: `1px solid ${T.amberBd}`, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Close Manually</button>
+                            <button onClick={() => deleteSignal(sg.id)} style={{ padding: "9px 12px", borderRadius: 9, background: T.redBg, color: T.red, border: `1px solid ${T.redBd}`, cursor: "pointer", display: "flex", alignItems: "center" }}><Trash2 size={14} /></button>
+                          </div>}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {openSigs.length === 0 && (
+            <div style={{ background: T.bg2, border: `1px solid ${T.border}`, borderRadius: 14, padding: "32px 20px", marginBottom: 16, textAlign: "center" }}>
+              <Radio size={28} style={{ color: T.textD, marginBottom: 10 }} />
+              <div style={{ fontSize: 13, color: T.textD }}>No open signals. Log one above or run a scan.</div>
+            </div>
+          )}
+
+          {/* ── Equity Curve ── */}
+          {equityCurve.length > 1 && (
+            <div style={{ background: T.bg2, border: `1px solid ${T.border}`, borderRadius: 14, padding: "16px 18px", marginBottom: 16 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: T.text, marginBottom: 12, display: "flex", alignItems: "center", gap: 7, textTransform: "uppercase", letterSpacing: 0.6 }}><TrendingUp size={13} style={{ color: T.green }} />Equity Curve</div>
+              <ResponsiveContainer width="100%" height={180}><AreaChart data={equityCurve} margin={{ top: 5, right: 10, bottom: 5, left: 0 }}><defs><linearGradient id="eqGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor={T.green} stopOpacity={0.3} /><stop offset="95%" stopColor={T.green} stopOpacity={0} /></linearGradient></defs><CartesianGrid strokeDasharray="3 3" stroke={T.border} /><XAxis dataKey="label" tick={{ fill: T.textD, fontSize: 10 }} /><YAxis tick={{ fill: T.textD, fontSize: 10 }} tickFormatter={v => `${v > 0 ? "+" : ""}${v}%`} /><Tooltip contentStyle={{ background: T.bg2, border: `1px solid ${T.border}`, borderRadius: 8, fontSize: 12 }} formatter={(v, _n, p) => [`${v >= 0 ? "+" : ""}${v}% ${p.payload.result === "WIN" ? "✓" : p.payload.result === "LOSS" ? "✗" : ""}`, "Cum P&L"]} /><Area type="monotone" dataKey="cumPnL" stroke={T.green} fill="url(#eqGrad)" strokeWidth={2} dot={({ cx, cy, payload }) => <circle key={cx} cx={cx} cy={cy} r={4} fill={payload.result === "WIN" ? T.green : payload.result === "LOSS" ? T.red : T.cyan} stroke="none" />} /></AreaChart></ResponsiveContainer>
+            </div>
+          )}
+
+          {/* ── Closed History ── */}
+          {closedSigs.length > 0 && (
+            <div style={{ background: T.bg2, border: `1px solid ${T.border}`, borderRadius: 14, padding: "16px 18px" }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: T.text, marginBottom: 14, display: "flex", alignItems: "center", gap: 7, textTransform: "uppercase", letterSpacing: 0.6 }}>
+                <BookOpen size={13} style={{ color: T.cyan }} />Closed History
+                <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 10, background: T.bg3, color: T.textM, textTransform: "none", letterSpacing: 0, fontWeight: 400 }}>{closedSigs.length}</span>
+              </div>
+              {/* Desktop */}
+              <div className="sig-table-wrap" style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                  <thead><tr style={{ borderBottom: `1px solid ${T.border}` }}>
+                    {["","Pair","Dir","Entry","Exit","P&L","Outcome","R:R","Duration","Closed"].map((h,i) => (
+                      <th key={i} style={{ padding: "7px 10px", textAlign: "left", color: T.textD, fontWeight: 500, fontSize: 10, textTransform: "uppercase", letterSpacing: 0.5 }}>{h}</th>
+                    ))}
+                  </tr></thead>
+                  <tbody>{closedSigs.map(sg => {
+                    const pnl = calcPnL(sg, liveData);
+                    const isWin = sg.result === "WIN";
+                    const isLoss = sg.result === "LOSS";
+                    const openedAt = new Date(sg.createdAt);
+                    const closedAt = sg.closedAt ? new Date(sg.closedAt) : null;
+                    const durationMs = closedAt ? closedAt - openedAt : null;
+                    const dur = durationMs == null ? "—" : durationMs < 3600000 ? `${Math.round(durationMs/60000)}m` : durationMs < 86400000 ? `${Math.round(durationMs/3600000)}h` : `${Math.round(durationMs/86400000)}d`;
+                    return (
+                      <tr key={sg.id} style={{ borderLeft: `3px solid ${isWin ? T.green : isLoss ? T.red : T.border}`, background: isWin ? "rgba(16,185,129,0.03)" : isLoss ? "rgba(239,68,68,0.03)" : "transparent" }}>
+                        <td style={{ padding: "10px 10px" }}><GradePill grade={sg.grade} /></td>
+                        <td style={{ padding: "10px 10px", fontWeight: 700 }}>{sg.instrument}</td>
+                        <td style={{ padding: "10px 10px", fontWeight: 700, color: sg.direction === "Long" ? T.green : T.red }}>{sg.direction === "Long" ? "▲ Long" : "▼ Short"}</td>
+                        <td style={{ padding: "10px 10px", color: T.textM, fontFamily: "monospace" }}>{fmtPrice(sg, sg.entryPrice)}</td>
+                        <td style={{ padding: "10px 10px", color: T.textM, fontFamily: "monospace" }}>{fmtPrice(sg, sg.exitPrice)}</td>
+                        <td style={{ padding: "10px 10px", fontWeight: 700, color: pnl == null ? T.textD : pc(pnl) }}>{pnl == null ? "—" : `${pnl >= 0 ? "+" : ""}${pnl.toFixed(2)}%`}</td>
+                        <td style={{ padding: "10px 10px" }}>
+                          {isWin && <span style={{ fontSize: 10, fontWeight: 700, padding: "3px 8px", borderRadius: 5, background: T.greenBg, color: T.green, border: `1px solid ${T.greenBd}` }}>✓ TP HIT</span>}
+                          {isLoss && <span style={{ fontSize: 10, fontWeight: 700, padding: "3px 8px", borderRadius: 5, background: T.redBg, color: T.red, border: `1px solid ${T.redBd}` }}>✗ SL HIT</span>}
+                          {!sg.result && <span style={{ fontSize: 10, color: T.textD }}>Manual</span>}
+                        </td>
+                        <td style={{ padding: "10px 10px", color: T.textM }}>{sg.riskReward || "—"}</td>
+                        <td style={{ padding: "10px 10px", color: T.textD, fontSize: 11 }}>{dur}</td>
+                        <td style={{ padding: "10px 10px", color: T.textD, fontSize: 11 }}>{closedAt ? closedAt.toLocaleDateString() : "—"}</td>
+                      </tr>
+                    );
+                  })}</tbody>
+                </table>
+              </div>
+              {/* Mobile cards */}
+              <div className="sig-cards">
+                {closedSigs.map(sg => {
+                  const pnl = calcPnL(sg, liveData);
+                  const isWin = sg.result === "WIN";
+                  const isLoss = sg.result === "LOSS";
+                  const openedAt = new Date(sg.createdAt);
+                  const closedAt2 = sg.closedAt ? new Date(sg.closedAt) : null;
+                  const durationMs = closedAt2 ? closedAt2 - openedAt : null;
+                  const dur = durationMs == null ? "—" : durationMs < 3600000 ? `${Math.round(durationMs/60000)}m` : durationMs < 86400000 ? `${Math.round(durationMs/3600000)}h` : `${Math.round(durationMs/86400000)}d`;
+                  return (
+                    <div key={sg.id} style={{ background: T.bg, border: `1px solid ${isWin ? T.greenBd : isLoss ? T.redBd : T.border}`, borderRadius: 12, padding: "12px 14px", marginBottom: 8 }}>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                          <span style={{ fontWeight: 800, color: T.text }}>{sg.instrument}</span>
+                          <span style={{ fontSize: 11, fontWeight: 700, color: sg.direction === "Long" ? T.green : T.red }}>{sg.direction === "Long" ? "▲" : "▼"}</span>
+                          <GradePill grade={sg.grade} />
+                        </div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          {isWin && <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 5, background: T.greenBg, color: T.green, border: `1px solid ${T.greenBd}` }}>✓ TP HIT</span>}
+                          {isLoss && <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 5, background: T.redBg, color: T.red, border: `1px solid ${T.redBd}` }}>✗ SL HIT</span>}
+                          {!sg.result && <span style={{ fontSize: 10, color: T.textD }}>Manual</span>}
+                          <span style={{ fontSize: 16, fontWeight: 800, color: pnl == null ? T.textD : pc(pnl) }}>{pnl == null ? "—" : `${pnl >= 0 ? "+" : ""}${pnl.toFixed(2)}%`}</span>
+                        </div>
+                      </div>
+                      <div style={{ display: "flex", gap: 8, fontSize: 11, color: T.textD }}>
+                        <span>Entry: <span style={{ color: T.textM }}>{fmtPrice(sg, sg.entryPrice)}</span></span>
+                        <span>Exit: <span style={{ color: T.textM }}>{fmtPrice(sg, sg.exitPrice)}</span></span>
+                        <span>R:R: <span style={{ color: T.textM }}>{sg.riskReward || "—"}</span></span>
+                        <span>Held: <span style={{ color: T.textM }}>{dur}</span></span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </>
       );
     };
@@ -2066,7 +2613,15 @@ Return ONLY valid JSON (no markdown):
     );
 
     // ── AI Strategy builder ────────────────────────────────────────────────
-    const renderStrategyTab = () => (
+    const renderStrategyTab = () => {
+      const cats = {
+        positioning: { label: "COT & Positioning", color: T.cyan },
+        sentiment:   { label: "Retail Sentiment",  color: T.purple },
+        orderflow:   { label: "Order Flow",         color: T.amber },
+        options:     { label: "Options",            color: T.blue },
+        volatility:  { label: "Volatility",         color: T.green },
+      };
+      return (
       <>
         <div style={s.cd}>
           <div style={s.ct}><Shield size={14} />Strategy rules — {STRATEGY_RULES.length} rules across 5 pillars</div>
@@ -2114,11 +2669,12 @@ Return ONLY valid JSON (no markdown):
           ) : <div style={{ textAlign: "center", padding: 30, color: T.textD }}><Brain size={28} style={{ marginBottom: 10, opacity: 0.4 }} /><div style={{ fontSize: 12 }}>Run AI analysis for live COT + sentiment + SMC entry levels</div></div>}
         </div>
       </>
-    );
+      );
+    };
 
     return (
       <>
-        <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
+        <div className="lab-tabs" style={{ display: "flex", gap: 8, marginBottom: 20, overflowX: "auto", scrollbarWidth: "none", flexWrap: "nowrap" }}>
           <LabBtn id="scanner" label="SMC Scanner" icon={Activity} />
           <LabBtn id="builder" label="Trade Builder" icon={Target} />
           <LabBtn id="signals" label="Signals" icon={Radio} />
@@ -2134,286 +2690,222 @@ Return ONLY valid JSON (no markdown):
     );
   };
 
-  const cats = {positioning:{label:"COT positioning",color:T.purple},sentiment:{label:"Sentiment",color:T.amber},orderflow:{label:"Order flow",color:T.cyan},options:{label:"Options OI & put/call",color:T.blue},volatility:{label:"Volatility",color:"#f97316"}};
-  const renderStrategy = () => (<>
-    <div style={s.cd}>
-      <div style={s.ct}><Shield size={14}/>Strategy rules engine — {STRATEGY_RULES.length} rules across 5 pillars</div>
-      {Object.entries(cats).map(([k,c])=>(<div key={k} style={{marginBottom:16}}><div style={{fontSize:11,fontWeight:600,color:c.color,textTransform:"uppercase",letterSpacing:1,marginBottom:8,display:"flex",alignItems:"center",gap:6}}><div style={{width:8,height:8,borderRadius:4,background:c.color}}/>{c.label}</div>
-        {STRATEGY_RULES.filter(r=>r.category===k).map(r=>(<div key={r.id} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 14px",background:T.bg,borderRadius:8,marginBottom:6,border:`1px solid ${T.border}`}}><div style={{width:28,height:28,borderRadius:7,background:`${c.color}15`,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700,fontSize:13,color:c.color,flexShrink:0}}>{r.id}</div><div style={{flex:1}}><div style={{fontSize:13,fontWeight:600}}>{r.name}</div><div style={{fontSize:11,color:T.textM}}>{r.desc}</div></div><div style={{display:"flex",gap:3}}>{[1,2,3].map(w=><div key={w} style={{width:7,height:7,borderRadius:4,background:w<=r.weight?c.color:T.bg3}}/>)}</div></div>))}
-      </div>))}
-    </div>
-    <div style={{...s.cd,marginTop:18}}>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
-        <div style={s.ct}><Zap size={14}/>AI analysis — {sel}</div>
-        <button onClick={runAi} disabled={aiLoading} style={{...s.btn(T.accent,"#fff"),opacity:aiLoading?0.6:1}}><RefreshCw size={13} style={aiLoading?{animation:"spin 1s linear infinite"}:{}}/>{aiLoading?"Analyzing...":"Run AI analysis"}</button>
-      </div>
-      {aiData?(<div style={{background:T.bg,borderRadius:10,padding:18,border:`1px solid ${T.borderL}`}}>
-        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10,flexWrap:"wrap"}}>
-          <span style={{padding:"2px 10px",borderRadius:5,fontSize:11,fontWeight:600,background:aiData.bias==="Bullish"?T.greenBg:aiData.bias==="Bearish"?T.redBg:T.amberBg,color:aiData.bias==="Bullish"?T.green:aiData.bias==="Bearish"?T.red:T.amber}}>{aiData.bias||"N/A"}</span>
-          {aiData.instrument&&<span style={{fontSize:11,color:T.textD}}>{aiData.instrument}</span>}
-          {aiData.confidence&&<span style={{fontSize:11,color:T.purple,fontWeight:600}}>Confidence {aiData.confidence}/10</span>}
-          {aiData.riskReward&&<span style={{fontSize:11,color:T.cyan}}>R:R {aiData.riskReward}</span>}
-          {aiData.validFor&&<span style={{fontSize:11,color:T.amber}}>Valid: {aiData.validFor}</span>}
-          {lastRef&&<span style={{fontSize:10,color:T.textD,marginLeft:"auto"}}>{new Date(lastRef).toLocaleString()}</span>}
-        </div>
-        <div style={{fontSize:13,lineHeight:1.7,color:T.text,marginBottom:10}}>{aiData.summary}</div>
-        {(aiData.entryZone||aiData.target||aiData.stopLoss)&&(
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:12}}>
-            {aiData.entryZone&&<div style={{padding:"8px 12px",background:T.bg2,borderRadius:8,border:`1px solid ${T.border}`}}><div style={{fontSize:10,color:T.textD,marginBottom:2}}>ENTRY ZONE</div><div style={{fontFamily:"'JetBrains Mono',monospace",fontSize:13,color:T.text,fontWeight:600}}>{aiData.entryZone}</div></div>}
-            {aiData.target&&<div style={{padding:"8px 12px",background:T.greenBg,borderRadius:8,border:`1px solid ${T.greenBd}`}}><div style={{fontSize:10,color:T.green,marginBottom:2}}>TARGET</div><div style={{fontFamily:"'JetBrains Mono',monospace",fontSize:13,color:T.green,fontWeight:600}}>{aiData.target}</div></div>}
-            {aiData.stopLoss&&<div style={{padding:"8px 12px",background:T.redBg,borderRadius:8,border:`1px solid ${T.redBd}`}}><div style={{fontSize:10,color:T.red,marginBottom:2}}>STOP LOSS</div><div style={{fontFamily:"'JetBrains Mono',monospace",fontSize:13,color:T.red,fontWeight:600}}>{aiData.stopLoss}</div></div>}
-          </div>
-        )}
-        {aiData.cotUpdate&&<div style={{fontSize:12,color:T.textM,marginBottom:4}}><strong style={{color:T.text}}>COT:</strong> {aiData.cotUpdate}</div>}
-        {aiData.sentimentUpdate&&<div style={{fontSize:12,color:T.textM,marginBottom:4}}><strong style={{color:T.text}}>Sentiment:</strong> {aiData.sentimentUpdate}</div>}
-        {aiData.optionFlowUpdate&&<div style={{fontSize:12,color:T.textM,marginBottom:4}}><strong style={{color:T.cyan}}>Option flow:</strong> {aiData.optionFlowUpdate}</div>}
-        {aiData.optionsOIUpdate&&<div style={{fontSize:12,color:T.textM,marginBottom:4}}><strong style={{color:T.blue}}>Options OI:</strong> {aiData.optionsOIUpdate}</div>}
-        {aiData.catalysts&&aiData.catalysts.length>0&&<div style={{fontSize:12,color:T.textM,marginBottom:4}}><strong style={{color:T.amber}}>Catalysts:</strong> {aiData.catalysts.join(" · ")}</div>}
-        {aiData.keyLevels&&<div style={{display:"flex",gap:14,marginTop:8}}><div style={{fontSize:11,color:T.green}}>Support: {aiData.keyLevels.support}</div><div style={{fontSize:11,color:T.red}}>Resistance: {aiData.keyLevels.resistance}</div></div>}
-        <div style={{marginTop:14,paddingTop:12,borderTop:`1px solid ${T.border}`}}>
-          <button onClick={()=>{
-            const entry = aiData.entryZone ? aiData.entryZone.split("-")[0].trim() : (liveData[aiData.instrument||sel]?.price||"");
-            setNewSig({ instrument: aiData.instrument||sel, direction: aiData.bias==="Bearish"?"Short":"Long", entryPrice: String(entry), targetPrice: aiData.target||"", stopLoss: aiData.stopLoss||"", confidence: Math.min(10, Math.max(1, aiData.confidence||7)), notes: aiData.summary||"", bias: aiData.bias||"Neutral", riskReward: aiData.riskReward||"", validFor: aiData.validFor||"", aiSummary: aiData.summary||"" });
-            setView("tradelab"); setLabTab("signals");
-          }} style={{...s.btn(T.accent,"#fff"),fontSize:12}}><Plus size={13}/>Log as Signal</button>
-        </div>
-      </div>):(<div style={{textAlign:"center",padding:30,color:T.textD}}><Brain size={28} style={{marginBottom:10,opacity:0.4}}/><div style={{fontSize:12}}>Run AI analysis for live COT + sentiment + option flow + entry levels</div></div>)}
-    </div>
-  </>);
-
-  const renderJournal = () => (<>
-    <div style={s.cd}>
-      <div style={s.ct}><Plus size={14}/>New trade idea</div>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr auto",gap:10,alignItems:"end"}}>
-        <div><label style={{fontSize:10,color:T.textD,display:"block",marginBottom:3}}>Instrument</label><select value={newE.instrument} onChange={e=>setNewE({...newE,instrument:e.target.value})} style={{width:"100%",padding:"7px 10px",borderRadius:7,background:T.bg,border:`1px solid ${T.border}`,color:T.text,fontSize:12}}>{Object.keys(INSTRUMENTS).map(k=><option key={k} value={k}>{k}</option>)}</select></div>
-        <div><label style={{fontSize:10,color:T.textD,display:"block",marginBottom:3}}>Direction</label><select value={newE.direction} onChange={e=>setNewE({...newE,direction:e.target.value})} style={{width:"100%",padding:"7px 10px",borderRadius:7,background:T.bg,border:`1px solid ${T.border}`,color:T.text,fontSize:12}}><option>Long</option><option>Short</option></select></div>
-        <div><label style={{fontSize:10,color:T.textD,display:"block",marginBottom:3}}>Confidence</label><select value={newE.confidence} onChange={e=>setNewE({...newE,confidence:+e.target.value})} style={{width:"100%",padding:"7px 10px",borderRadius:7,background:T.bg,border:`1px solid ${T.border}`,color:T.text,fontSize:12}}>{[1,2,3,4,5].map(n=><option key={n} value={n}>{n}</option>)}</select></div>
-        <button onClick={addE} style={{...s.btn(T.accent,"#fff"),height:34}}>Add</button>
-      </div>
-      <div style={{marginTop:10}}><textarea value={newE.notes} onChange={e=>setNewE({...newE,notes:e.target.value})} placeholder="Trade thesis: COT + sentiment + option flow rationale..." rows={3} style={{width:"100%",padding:"9px 10px",borderRadius:7,background:T.bg,border:`1px solid ${T.border}`,color:T.text,fontSize:12,resize:"vertical",fontFamily:"inherit"}}/></div>
-    </div>
-    <div style={{...s.cd,marginTop:18}}>
-      <div style={s.ct}><BookOpen size={14}/>Trade ideas ({journal.length})</div>
-      {journal.length===0?(<div style={{textAlign:"center",padding:30,color:T.textD,fontSize:12}}><BookOpen size={24} style={{marginBottom:8,opacity:0.4}}/><div>No entries yet. Persists across sessions.</div></div>):journal.map(e=>(
-        <div key={e.id} style={{display:"flex",gap:10,padding:14,background:T.bg,borderRadius:10,border:`1px solid ${T.border}`,marginBottom:8,alignItems:"flex-start"}}>
-          <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:3,minWidth:56}}><span style={{fontSize:12,fontWeight:700,color:e.direction==="Long"?T.green:T.red}}>{e.direction}</span><span style={{fontSize:11,fontWeight:600}}>{e.instrument}</span><div style={{display:"flex",gap:2}}>{[1,2,3,4,5].map(n=><div key={n} style={{width:5,height:5,borderRadius:3,background:n<=e.confidence?T.accent:T.bg3}}/>)}</div></div>
-          <div style={{flex:1}}><div style={{fontSize:12,lineHeight:1.6,color:T.textM}}>{e.notes}</div><div style={{fontSize:10,color:T.textD,marginTop:4}}><Clock size={10} style={{display:"inline",verticalAlign:"middle",marginRight:3}}/>{new Date(e.timestamp).toLocaleString()}</div></div>
-          <div style={{display:"flex",gap:5}}>
-            <button onClick={()=>saveJ(journal.map(x=>x.id===e.id?{...x,status:x.status==="Open"?"Closed":"Open"}:x))} style={{padding:"3px 8px",borderRadius:5,fontSize:10,fontWeight:600,background:e.status==="Open"?T.greenBg:T.bg3,color:e.status==="Open"?T.green:T.textD,border:`1px solid ${e.status==="Open"?T.greenBd:T.border}`,cursor:"pointer"}}>{e.status}</button>
-            <button onClick={()=>saveJ(journal.filter(x=>x.id!==e.id))} style={{padding:"3px 6px",borderRadius:5,background:T.redBg,color:T.red,border:`1px solid ${T.redBd}`,cursor:"pointer",display:"flex",alignItems:"center"}}><Trash2 size={11}/></button>
-          </div>
-        </div>
-      ))}
-    </div>
-  </>);
-
-  const renderSignals = () => {
-    const openSigs = signals.filter(s => s.status === "OPEN");
-    const closedSigs = signals.filter(s => s.status === "CLOSED");
-    const wins = closedSigs.filter(s => (calcPnL(s, liveData) || 0) > 0).length;
-    const winRate = closedSigs.length > 0 ? ((wins / closedSigs.length) * 100).toFixed(0) : null;
-    const totalClosedPnL = closedSigs.reduce((acc, s) => acc + (calcPnL(s, liveData) || 0), 0);
-    const openPnL = openSigs.reduce((acc, s) => acc + (calcPnL(s, liveData) || 0), 0);
-
-    // Equity curve: cumulative closed P&L over time
-    const equityCurve = closedSigs.slice().sort((a, b) => new Date(a.closedAt) - new Date(b.closedAt)).reduce((acc, s, i) => {
-      const prev = acc[i - 1]?.cumPnL || 0;
-      const pnl = calcPnL(s, liveData) || 0;
-      acc.push({ label: new Date(s.closedAt).toLocaleDateString("en-GB", {day:"2-digit",month:"short"}), cumPnL: parseFloat((prev + pnl).toFixed(2)), pnl: parseFloat(pnl.toFixed(2)) });
-      return acc;
-    }, []);
-
-    const pnlColor = v => v >= 0 ? T.green : T.red;
-    const inp = { background: T.bg, border: `1px solid ${T.border}`, color: T.text, fontSize: 12, padding: "7px 10px", borderRadius: 7, width: "100%" };
-
-    return (<>
-      {/* Summary stats */}
-      <div style={s.g4}>
-        <div style={s.cd}><div style={{fontSize:11,color:T.textD,textTransform:"uppercase",letterSpacing:0.6,marginBottom:6}}>Total Signals</div><div style={{fontSize:28,fontWeight:700}}>{signals.length}</div><div style={{fontSize:11,color:T.textM}}>{openSigs.length} open · {closedSigs.length} closed</div></div>
-        <div style={s.cd}><div style={{fontSize:11,color:T.textD,textTransform:"uppercase",letterSpacing:0.6,marginBottom:6}}>Win Rate</div><div style={{fontSize:28,fontWeight:700,color:winRate>=50?T.green:winRate!==null?T.red:T.textD}}>{winRate!==null?winRate+"%":"—"}</div><div style={{fontSize:11,color:T.textM}}>{wins} wins / {closedSigs.length - wins} losses</div></div>
-        <div style={s.cd}><div style={{fontSize:11,color:T.textD,textTransform:"uppercase",letterSpacing:0.6,marginBottom:6}}>Closed P&L</div><div style={{fontSize:28,fontWeight:700,color:pnlColor(totalClosedPnL)}}>{totalClosedPnL>=0?"+":""}{totalClosedPnL.toFixed(2)}%</div><div style={{fontSize:11,color:T.textM}}>{closedSigs.length} closed trades</div></div>
-        <div style={s.cd}><div style={{fontSize:11,color:T.textD,textTransform:"uppercase",letterSpacing:0.6,marginBottom:6}}>Open P&L</div><div style={{fontSize:28,fontWeight:700,color:pnlColor(openPnL)}}>{openPnL>=0?"+":""}{openPnL.toFixed(2)}%</div><div style={{fontSize:11,color:T.textM}}>{openSigs.length} open trades</div></div>
-      </div>
-
-      {/* New signal form */}
-      <div style={s.cd}>
-        <div style={s.ct}><Plus size={14}/>Log New Signal</div>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:10,marginBottom:10}}>
-          <div><label style={{fontSize:10,color:T.textD,display:"block",marginBottom:3}}>Instrument</label><select value={newSig.instrument} onChange={e=>setNewSig({...newSig,instrument:e.target.value})} style={inp}>{Object.keys(INSTRUMENTS).map(k=><option key={k}>{k}</option>)}</select></div>
-          <div><label style={{fontSize:10,color:T.textD,display:"block",marginBottom:3}}>Direction</label><select value={newSig.direction} onChange={e=>setNewSig({...newSig,direction:e.target.value})} style={inp}><option>Long</option><option>Short</option></select></div>
-          <div><label style={{fontSize:10,color:T.textD,display:"block",marginBottom:3}}>Bias</label><select value={newSig.bias} onChange={e=>setNewSig({...newSig,bias:e.target.value})} style={inp}><option>Bullish</option><option>Bearish</option><option>Neutral</option></select></div>
-          <div><label style={{fontSize:10,color:T.textD,display:"block",marginBottom:3}}>Confidence (1-10)</label><input type="number" min={1} max={10} value={newSig.confidence} onChange={e=>setNewSig({...newSig,confidence:+e.target.value})} style={inp}/></div>
-        </div>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:10,marginBottom:10}}>
-          <div><label style={{fontSize:10,color:T.textD,display:"block",marginBottom:3}}>Entry Price</label><input type="number" step="any" value={newSig.entryPrice} onChange={e=>setNewSig({...newSig,entryPrice:e.target.value})} placeholder={liveData[newSig.instrument]?.price||"0"} style={inp}/></div>
-          <div><label style={{fontSize:10,color:T.textD,display:"block",marginBottom:3}}>Target Price</label><input type="number" step="any" value={newSig.targetPrice} onChange={e=>setNewSig({...newSig,targetPrice:e.target.value})} style={inp}/></div>
-          <div><label style={{fontSize:10,color:T.textD,display:"block",marginBottom:3}}>Stop Loss</label><input type="number" step="any" value={newSig.stopLoss} onChange={e=>setNewSig({...newSig,stopLoss:e.target.value})} style={inp}/></div>
-          <div><label style={{fontSize:10,color:T.textD,display:"block",marginBottom:3}}>R:R</label><input type="text" value={newSig.riskReward||""} onChange={e=>setNewSig({...newSig,riskReward:e.target.value})} placeholder="e.g. 1:2.5" style={inp}/></div>
-        </div>
-        <textarea value={newSig.notes} onChange={e=>setNewSig({...newSig,notes:e.target.value})} placeholder="Trade thesis (AI-generated or manual)..." rows={2} style={{...inp,width:"100%",resize:"vertical",marginBottom:10,fontFamily:"inherit"}}/>
-        <button onClick={async ()=>{ if(!newSig.entryPrice) return; await createSignal({...newSig, entryPrice: newSig.entryPrice || liveData[newSig.instrument]?.price}); setNewSig({instrument:"XAUUSD",direction:"Long",entryPrice:"",targetPrice:"",stopLoss:"",confidence:7,notes:"",bias:"Neutral",riskReward:"",validFor:"",aiSummary:""}); }} disabled={signalsLoading||!newSig.entryPrice} style={{...s.btn(T.accent,"#fff"),opacity:(!newSig.entryPrice||signalsLoading)?0.5:1}}><Plus size={13}/>{signalsLoading?"Saving...":"Log Signal"}</button>
-      </div>
-
-      {/* Open signals */}
-      {userTrades.length > 0 && <div style={{...s.cd,marginTop:18, border: `1px solid ${T.purple}40`, background: `linear-gradient(to bottom right, ${T.bg2}, ${T.purple}10)`}}>
-        <div style={{...s.ct, color: T.purple}}><Activity size={14}/>Live Session Trades ({userTrades.length})</div>
-        <div style={{overflowX:"auto"}}>
-          <table style={{...s.tb,minWidth:700}}><thead><tr>
-            {["Pair","Dir","Entry","Current","Lot","P&L (%)","Opened",""].map(h=><th key={h} style={s.th}>{h}</th>)}
-          </tr></thead><tbody>
-            {userTrades.map(t => {
-                const cur = liveData[t.instr]?.price;
-                const pnl = cur ? ((cur - t.entry) / t.entry) * 100 * (t.dir === "BUY" ? 1 : -1) : 0;
-                return (
-                  <tr key={t.id}>
-                    <td style={{...s.td, fontWeight: 700}}>{t.instr} <span style={{fontSize: 9, padding: "2px 4px", borderRadius: 4, background: T.purple, color: "#fff", marginLeft: 4}}>LIVE</span></td>
-                    <td style={{...s.td, color: t.dir === "BUY" ? T.green : T.red, fontWeight: 600}}>{t.dir}</td>
-                    <td style={s.td}>{t.entry}</td>
-                    <td style={{...s.td, color: T.cyan}}>{cur || "—"}</td>
-                    <td style={s.td}>{t.lot}</td>
-                    <td style={{...s.td, fontWeight: 700, color: pnlColor(pnl)}}>{pnl >= 0 ? "+" : ""}{pnl.toFixed(2)}%</td>
-                    <td style={{...s.td, color: T.textD, fontSize: 11}}>{new Date(t.timestamp).toLocaleTimeString()}</td>
-                    <td style={s.td}>
-                        <button onClick={() => setUserTrades(userTrades.filter(it => it.id !== t.id))} style={{...s.btn(T.redBg, T.red), padding: "4px 8px", border: `1px solid ${T.redBd}`}}>Close</button>
-                    </td>
-                  </tr>
-                )
-            })}
-          </tbody></table>
-        </div>
-      </div>}
-
-      {openSigs.length > 0 && <div style={{...s.cd,marginTop:18}}>
-        <div style={s.ct}><Radio size={14}/>Open Signals ({openSigs.length})</div>
-        <div style={{overflowX:"auto"}}>
-          <table style={{...s.tb,minWidth:700}}><thead><tr>
-            {["Pair","Dir","Entry","Current","Target","Stop","P&L %","Conf","Logged",""].map(h=><th key={h} style={s.th}>{h}</th>)}
-          </tr></thead><tbody>
-            {openSigs.map(sig => {
-              const pnl = calcPnL(sig, liveData);
-              const cur = liveData[sig.instrument]?.price;
-              return (<tr key={sig.id}>
-                <td style={{...s.td,fontWeight:700}}>{sig.instrument}</td>
-                <td style={{...s.td,color:sig.direction==="Long"?T.green:T.red,fontWeight:600}}>{sig.direction}</td>
-                <td style={s.td}>{sig.entryPrice}</td>
-                <td style={{...s.td,color:T.cyan}}>{cur||"—"}</td>
-                <td style={{...s.td,color:T.green}}>{sig.targetPrice||"—"}</td>
-                <td style={{...s.td,color:T.red}}>{sig.stopLoss||"—"}</td>
-                <td style={{...s.td,fontWeight:700,color:pnl===null?"#fff":pnlColor(pnl)}}>{pnl===null?"—":`${pnl>=0?"+":""}${pnl.toFixed(2)}%`}</td>
-                <td style={s.td}>{sig.confidence}/10</td>
-                <td style={{...s.td,color:T.textD,fontSize:11}}>{new Date(sig.createdAt).toLocaleDateString()}</td>
-                <td style={s.td}>
-                  {closeForm?.id===sig.id ? (
-                    <div style={{display:"flex",gap:4,alignItems:"center"}}>
-                      <input type="number" step="any" value={closeForm.exitPrice} onChange={e=>setCloseForm({...closeForm,exitPrice:e.target.value})} placeholder="Exit price" style={{...inp,width:90,padding:"3px 6px"}}/>
-                      <button onClick={()=>closeSignal(sig.id,parseFloat(closeForm.exitPrice))} style={{...s.btn(T.green,"#fff"),padding:"3px 8px",fontSize:11}}>Close</button>
-                      <button onClick={()=>setCloseForm(null)} style={{...s.btn(T.bg3,T.textM),padding:"3px 6px",fontSize:11}}>✕</button>
-                    </div>
-                  ) : (
-                    <div style={{display:"flex",gap:4}}>
-                      <button onClick={()=>setCloseForm({id:sig.id,exitPrice:cur||""})} style={{...s.btn(T.amberBg,T.amber),padding:"3px 8px",fontSize:11,border:`1px solid ${T.amberBd}`}}>Close</button>
-                      <button onClick={()=>deleteSignal(sig.id)} style={{...s.btn(T.redBg,T.red),padding:"3px 6px",border:`1px solid ${T.redBd}`}}><Trash2 size={11}/></button>
-                    </div>
-                  )}
-                </td>
-              </tr>);
-            })}
-          </tbody></table>
-        </div>
-      </div>}
-
-      {/* Equity curve */}
-      {equityCurve.length > 1 && <div style={{...s.cd,marginTop:18}}>
-        <div style={s.ct}><TrendingUp size={14}/>Equity Curve — Cumulative Closed P&L (%)</div>
-        <ResponsiveContainer width="100%" height={200}>
-          <AreaChart data={equityCurve} margin={{top:5,right:10,bottom:5,left:0}}>
-            <defs><linearGradient id="eqGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor={T.green} stopOpacity={0.3}/><stop offset="95%" stopColor={T.green} stopOpacity={0}/></linearGradient></defs>
-            <CartesianGrid strokeDasharray="3 3" stroke={T.border}/>
-            <XAxis dataKey="label" tick={{fill:T.textD,fontSize:10}}/>
-            <YAxis tick={{fill:T.textD,fontSize:10}} tickFormatter={v=>`${v>0?"+":""}${v}%`}/>
-            <Tooltip contentStyle={{background:T.bg2,border:`1px solid ${T.border}`,borderRadius:8,fontSize:12}} formatter={(v)=>[`${v>=0?"+":""}${v}%`,"Cum P&L"]}/>
-            <Area type="monotone" dataKey="cumPnL" stroke={T.green} fill="url(#eqGrad)" strokeWidth={2} dot={{fill:T.green,r:3}}/>
-          </AreaChart>
-        </ResponsiveContainer>
-      </div>}
-
-      {/* Closed history */}
-      {closedSigs.length > 0 && <div style={{...s.cd,marginTop:18}}>
-        <div style={s.ct}><BookOpen size={14}/>Closed Signal History ({closedSigs.length})</div>
-        <div style={{overflowX:"auto"}}>
-          <table style={{...s.tb,minWidth:700}}><thead><tr>
-            {["Pair","Dir","Entry","Exit","P&L %","R:R","Conf","Opened","Closed","Bias"].map(h=><th key={h} style={s.th}>{h}</th>)}
-          </tr></thead><tbody>
-            {closedSigs.map(sig => {
-              const pnl = calcPnL(sig, liveData);
-              return (<tr key={sig.id} style={{opacity:0.85}}>
-                <td style={{...s.td,fontWeight:700}}>{sig.instrument}</td>
-                <td style={{...s.td,color:sig.direction==="Long"?T.green:T.red,fontWeight:600}}>{sig.direction}</td>
-                <td style={s.td}>{sig.entryPrice}</td>
-                <td style={s.td}>{sig.exitPrice||"—"}</td>
-                <td style={{...s.td,fontWeight:700,color:pnl===null?T.textD:pnlColor(pnl)}}>{pnl===null?"—":`${pnl>=0?"+":""}${pnl.toFixed(2)}%`}</td>
-                <td style={s.td}>{sig.riskReward||"—"}</td>
-                <td style={s.td}>{sig.confidence}/10</td>
-                <td style={{...s.td,fontSize:11,color:T.textD}}>{new Date(sig.createdAt).toLocaleDateString()}</td>
-                <td style={{...s.td,fontSize:11,color:T.textD}}>{sig.closedAt?new Date(sig.closedAt).toLocaleDateString():"—"}</td>
-                <td style={{...s.td,color:sig.bias==="Bullish"?T.green:sig.bias==="Bearish"?T.red:T.amber,fontSize:11}}>{sig.bias||"—"}</td>
-              </tr>);
-            })}
-          </tbody></table>
-        </div>
-      </div>}
-
-      {signals.length === 0 && <div style={{...s.cd,marginTop:18,textAlign:"center",padding:40}}>
-        <Target size={32} style={{color:T.textD,marginBottom:12,opacity:0.4}}/>
-        <div style={{fontSize:13,color:T.textM,marginBottom:6}}>No signals logged yet</div>
-        <div style={{fontSize:11,color:T.textD}}>Run AI analysis in the Strategy tab, then click "Log as Signal" — or create one manually above.</div>
-      </div>}
-    </>);
-  };
 
   return (
     <div style={s.root}>
-      <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet"/>
+      <style>{`
+        @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+        @keyframes spin{to{transform:rotate(360deg)}}
+        @keyframes drawerIn{from{transform:translateX(-100%)}to{transform:translateX(0)}}
+        @keyframes fadeIn{from{opacity:0}to{opacity:1}}
+
+        /* ── Default (desktop) ── */
+        .mob-only{display:none!important}
+        .desk-nav{display:flex}
+        .hdr-meta{display:flex}
+        .hamburger-btn{display:none!important}
+        .drawer-overlay{display:none!important}
+
+        /* ── Tablet / Mobile ── */
+        @media(max-width:900px){
+          .desk-nav{display:none!important}
+          .hamburger-btn{display:flex!important;align-items:center;justify-content:center;width:36px;height:36px;border-radius:8px;background:#1a2235;border:1px solid #1e2d45;cursor:pointer;color:#e2e8f0;flex-shrink:0}
+          .mob-only{display:flex!important}
+          .hdr-meta{display:none!important}
+          .ti-root{padding-bottom:0!important}
+          .inst-bar{padding:8px 12px!important;gap:6px!important}
+          .inst-chip{padding:6px 10px!important;font-size:11px!important}
+          .g4-grid{grid-template-columns:repeat(2,1fr)!important}
+          .g2-grid{grid-template-columns:1fr!important}
+          .hdr-right{gap:6px!important}
+          .tbl-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+          .lab-tabs{gap:4px!important;flex-wrap:nowrap!important;overflow-x:auto!important;scrollbar-width:none!important}
+          .overview-actions{flex-wrap:wrap!important;gap:6px!important}
+          .cot-concepts{grid-template-columns:repeat(2,1fr)!important}
+          .asetup-grid{grid-template-columns:repeat(2,1fr)!important}
+          .lab-form-row{grid-template-columns:1fr 1fr!important}
+          .scanner-card{grid-template-columns:1fr auto!important;gap:10px!important}
+          .scanner-patterns{display:none!important}
+          .cal-wrap{height:calc(100vh - 160px)!important;padding:0!important}
+        }
+        @media(max-width:480px){
+          .g4-grid{grid-template-columns:1fr!important}
+          .hdr-title{font-size:14px!important}
+          .cot-concepts{grid-template-columns:1fr!important}
+          .asetup-grid{grid-template-columns:repeat(2,1fr)!important}
+          .lab-form-row{grid-template-columns:1fr!important}
+        }
+
+        /* ── Drawer ── */
+        .drawer-overlay{position:fixed;inset:0;z-index:500;background:rgba(0,0,0,0.6);animation:fadeIn 0.2s}
+        .drawer-panel{position:fixed;top:0;left:0;bottom:0;width:min(300px,85vw);background:#111827;border-right:1px solid #1e2d45;z-index:501;animation:drawerIn 0.25s ease-out;display:flex;flex-direction:column;overflow:hidden}
+        .drawer-item{display:flex;align-items:center;gap:12px;padding:14px 20px;font-size:14px;font-weight:600;border:none;background:none;cursor:pointer;width:100%;text-align:left;border-radius:0;transition:background 0.15s}
+        .drawer-item:hover,.drawer-item.active{background:#1a2235}
+        .drawer-divider{height:1px;background:#1e2d45;margin:6px 16px}
+      `}</style>
+      
+
+      {/* ── Header ── */}
       <header style={s.hdr}>
         <div style={{display:"flex",alignItems:"center",gap:10}}>
-          <div style={{width:34,height:34,borderRadius:9,background:`linear-gradient(135deg,${T.accent},${T.cyan})`,display:"flex",alignItems:"center",justifyContent:"center"}}><Activity size={18} color="#fff"/></div>
-          <div><div style={{fontSize:17,fontWeight:700,letterSpacing:-0.5}}>TradingIntel</div><div style={{fontSize:10,color:T.textD}}>COT · Sentiment · Order flow · Strategy</div></div>
-        </div>
-        <div style={{display:"flex",alignItems:"center",gap:10}}>
-          {isLive && <div style={{display:"flex",alignItems:"center",gap:5,padding:"3px 8px",borderRadius:6,background:T.greenBg,border:`1px solid ${T.greenBd}`}}>
-            <div style={{width:6,height:6,borderRadius:3,background:T.green,animation:"pulse 1.5s infinite"}}/>
-            <span style={{fontSize:10,fontWeight:700,color:T.green,letterSpacing:0.8}}>LIVE</span>
-          </div>}
-          <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-            <div style={{display:"flex",alignItems:"center",gap:4,fontSize:10,color:T.green}}>
-              <div style={{width:5,height:5,borderRadius:3,background:T.green,animation:"pulse 1.5s infinite"}}/>
-              Prices: Real-time (Yahoo Finance)
+          <div style={{width:34,height:34,borderRadius:9,background:`linear-gradient(135deg,${T.accent},${T.cyan})`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><Activity size={18} color="#fff"/></div>
+          <div>
+            <div className="hdr-title" style={{fontSize:17,fontWeight:700,letterSpacing:-0.5}}>TradingIntel</div>
+            <div className="hdr-meta" style={{fontSize:10,color:T.textD,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+              {isLive&&<><div style={{width:5,height:5,borderRadius:3,background:T.green,animation:"pulse 1.5s infinite"}}/>
+              <span style={{color:T.green}}>Live</span><span style={{color:T.border}}>·</span></>}
+              <span>COT {inst?.cot?.date||"Apr 7"}</span>
+              <span style={{color:T.border}}>·</span>
+              <span>Sentiment live</span>
             </div>
-            <span style={{color:T.border}}>|</span>
-            <div style={{fontSize:10,color:T.amber,display:"flex",alignItems:"center",gap:4}}>
-              <div style={{width:5,height:5,borderRadius:3,background:T.amber}}/>
-              COT: {inst?.cot?.date||"Apr 7, 2026"} (weekly CFTC)
-            </div>
-            <span style={{color:T.border}}>|</span>
-            <div style={{fontSize:10,color:T.textD}}>Sentiment: Myfxbook live</div>
-            {lastRef&&<span style={{fontSize:10,color:T.textD}}>· AI: {new Date(lastRef).toLocaleDateString()}</span>}
           </div>
-          <Link href="/profile" style={{display:"flex",alignItems:"center",gap:5,padding:"5px 10px",borderRadius:7,fontSize:12,fontWeight:600,border:`1px solid ${T.border}`,color:T.textM,textDecoration:"none"}}><User size={13}/>Profile</Link>
-          <button onClick={()=>signOut({callbackUrl:"/login"})} style={{display:"flex",alignItems:"center",gap:5,padding:"5px 10px",borderRadius:7,fontSize:12,fontWeight:600,border:`1px solid ${T.border}`,color:T.textM,background:"transparent",cursor:"pointer"}}><LogOut size={13}/>Logout</button>
-          <style>{`@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}`}</style>
+        </div>
+        <div className="hdr-right" style={{display:"flex",alignItems:"center",gap:8}}>
+          <Link href="/profile" style={{display:"flex",alignItems:"center",gap:5,padding:"6px 10px",borderRadius:7,fontSize:12,fontWeight:600,border:`1px solid ${T.border}`,color:T.textM,textDecoration:"none"}}><User size={13}/><span className="hdr-meta" style={{display:"flex"}}>Profile</span></Link>
+          <button onClick={()=>signOut({callbackUrl:"/login"})} style={{display:"flex",alignItems:"center",gap:5,padding:"6px 10px",borderRadius:7,fontSize:12,fontWeight:600,border:`1px solid ${T.border}`,color:T.textM,background:"transparent",cursor:"pointer"}}><LogOut size={13}/><span className="hdr-meta" style={{display:"flex"}}>Logout</span></button>
+          <button className="hamburger-btn" onClick={()=>setMenuOpen(o=>!o)} aria-label="Menu">
+            {menuOpen ? <X size={18}/> : <Menu size={18}/>}
+          </button>
         </div>
       </header>
-      <nav style={s.nav}>{VIEWS.map(v=>{const I=VIEW_ICONS[v];return <button key={v} style={s.ni(view===v)} onClick={()=>setView(v)}><I size={13}/>{VIEW_LABELS[v]}</button>})}</nav>
-      {view!=="overview"&&view!=="intelligence"&&<div style={s.ib}>{Object.keys(INSTRUMENTS).filter(k=>view!=="marketintel"||k!=="EURUSD").map(k=><div key={k} style={s.ic(sel===k)} onClick={()=>{setSel(k);setPosTab("overview");}}>{k}</div>)}</div>}
-      <main style={view==="intelligence"?{padding:0,flex:1,display:"flex",flexDirection:"column",minHeight:0,overflow:"hidden"}:{...s.mn,flex:1,overflowY:"auto"}}>
+
+      {/* ── Mobile drawer overlay ── */}
+      {menuOpen && (
+        <div className="drawer-overlay" onClick={()=>setMenuOpen(false)}>
+          <div className="drawer-panel" onClick={e=>e.stopPropagation()}>
+            {/* Drawer header */}
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"16px 20px",borderBottom:`1px solid ${T.border}`,flexShrink:0}}>
+              <div style={{display:"flex",alignItems:"center",gap:10}}>
+                <div style={{width:30,height:30,borderRadius:8,background:`linear-gradient(135deg,${T.accent},${T.cyan})`,display:"flex",alignItems:"center",justifyContent:"center"}}><Activity size={15} color="#fff"/></div>
+                <span style={{fontSize:15,fontWeight:700,color:T.text}}>TradingIntel</span>
+              </div>
+              <button onClick={()=>setMenuOpen(false)} style={{background:"none",border:"none",color:T.textD,cursor:"pointer",padding:4}}><X size={18}/></button>
+            </div>
+            {/* Nav items */}
+            <div style={{flex:1,overflowY:"auto",padding:"8px 0"}}>
+              <div style={{padding:"8px 20px 4px",fontSize:9,fontWeight:700,color:T.textD,textTransform:"uppercase",letterSpacing:1}}>Navigation</div>
+              {VIEWS.map(v=>{const I=VIEW_ICONS[v];const active=view===v;return(
+                <button key={v} className={`drawer-item${active?" active":""}`}
+                  style={{color:active?T.accent:T.textM,fontFamily:"var(--font-geist-mono),monospace"}}
+                  onClick={()=>{setView(v);setMenuOpen(false);}}>
+                  <I size={16} style={{color:active?T.accent:T.textD}}/>{VIEW_LABELS[v]}
+                  {active&&<div style={{marginLeft:"auto",width:6,height:6,borderRadius:3,background:T.accent}}/>}
+                </button>
+              )})}
+              <div className="drawer-divider"/>
+              <div style={{padding:"8px 20px 4px",fontSize:9,fontWeight:700,color:T.textD,textTransform:"uppercase",letterSpacing:1}}>Account</div>
+              <Link href="/profile" onClick={()=>setMenuOpen(false)} className="drawer-item" style={{color:T.textM,fontFamily:"var(--font-geist-mono),monospace",display:"flex",alignItems:"center",gap:12,padding:"14px 20px",textDecoration:"none"}}>
+                <User size={16} style={{color:T.textD}}/> Profile
+              </Link>
+              <button className="drawer-item" style={{color:T.red,fontFamily:"var(--font-geist-mono),monospace"}}
+                onClick={()=>{setMenuOpen(false);signOut({callbackUrl:"/login"});}}>
+                <LogOut size={16} style={{color:T.red}}/> Sign Out
+              </button>
+            </div>
+            {/* Drawer footer */}
+            <div style={{padding:"12px 20px",borderTop:`1px solid ${T.border}`,flexShrink:0}}>
+              {isLive&&<div style={{display:"flex",alignItems:"center",gap:6,fontSize:11,color:T.green}}><div style={{width:6,height:6,borderRadius:3,background:T.green,animation:"pulse 1.5s infinite"}}/> Live Data Active</div>}
+              <div style={{fontSize:10,color:T.textD,marginTop:4}}>COT: {inst?.cot?.date||"Apr 7"}</div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Desktop top nav ── */}
+      <nav className="desk-nav" style={s.nav}>
+        {VIEWS.map(v=>{const I=VIEW_ICONS[v];return <button key={v} style={s.ni(view===v)} onClick={()=>setView(v)}><I size={13}/>{VIEW_LABELS[v]}</button>})}
+      </nav>
+
+      {/* ── Instrument bar ── */}
+      {view!=="overview"&&view!=="intelligence"&&(
+        <div className="inst-bar" style={{...s.ib,overflowX:"auto",flexWrap:"nowrap",scrollbarWidth:"none"}}>
+          {Object.keys(INSTRUMENTS).map(k=><div key={k} className="inst-chip" style={{...s.ic(sel===k),whiteSpace:"nowrap",flexShrink:0}} onClick={()=>{setSel(k);setPosTab("signal");}}>{k}</div>)}
+        </div>
+      )}
+
+      {/* ── Main content ── */}
+      <main className="ti-root" style={view==="intelligence"?{padding:0,flex:1,display:"flex",flexDirection:"column",minHeight:0,overflow:"hidden",paddingBottom:"env(safe-area-inset-bottom,0)"}:{...s.mn,flex:1,overflowY:"auto",paddingBottom:"calc(64px + env(safe-area-inset-bottom,0))"}}>
         {view==="overview"&&renderOverview()}
-        {view==="intelligence"&&<TradingIntelligence />}
-        {view==="marketintel"&&renderPositioning()}
+        {view==="intelligence"&&<TradingIntelligence openSignals={signals.filter(s=>s.status==="OPEN")} liveData={liveData} onSignalClosed={fetchSignals} />}
+        {view==="intel-hub"&&renderPositioning()}
+        {view==="calendar"&&<div style={{...s.mn}}><EconomicCalendar /></div>}
         {view==="tradelab"&&renderTradeLab()}
       </main>
-      <footer style={{padding:"14px 24px",borderTop:`1px solid ${T.border}`,textAlign:"center",fontSize:10,color:T.textD,flexShrink:0}}>CFTC COT · Myfxbook · DailyFX · InvestingLive (ForexLive) · Not financial advice.</footer>
-      <ChatAssistant selectedInstrument={sel} intelligenceData={intelData} />
-    </div>
 
+      {/* ── Mobile quick-nav bar (bottom strip) ── */}
+      <nav className="mob-only" style={{position:"fixed",bottom:0,left:0,right:0,zIndex:200,background:T.bg2,borderTop:`1px solid ${T.border}`,padding:`6px 0 env(safe-area-inset-bottom,6px)`}}>
+        {VIEWS.map(v=>{const I=VIEW_ICONS[v];const active=view===v;return(
+          <button key={v} onClick={()=>setView(v)} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:3,padding:"5px 2px",background:"none",border:"none",cursor:"pointer",color:active?T.accent:T.textD}}>
+            <I size={active?20:17} style={{transition:"transform 0.15s",transform:active?"scale(1.1)":"scale(1)"}}/>
+            <span style={{fontSize:8,fontWeight:active?700:400,letterSpacing:0.3,textTransform:"uppercase",whiteSpace:"nowrap"}}>{VIEW_LABELS[v].split(" ")[0]}</span>
+          </button>
+        )})}
+      </nav>
+
+      <ChatAssistant selectedInstrument={sel} intelligenceData={intelData} />
+
+      {/* ── Signal auto-close toasts ── */}
+      <div style={{ position: "fixed", bottom: 80, right: 20, zIndex: 9998, display: "flex", flexDirection: "column", gap: 8, pointerEvents: "none" }}>
+        {sigToasts.map(t => (
+          <div key={t.id} style={{ pointerEvents: "auto", background: "rgba(17,24,39,0.97)", backdropFilter: "blur(12px)", borderLeft: `4px solid ${t.result === "WIN" ? T.green : T.red}`, padding: "10px 14px", borderRadius: 10, boxShadow: "0 8px 24px rgba(0,0,0,0.5)", border: `1px solid ${T.border}`, width: 270, animation: "slideIn 0.3s ease-out forwards" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+              <span style={{ fontSize: 14 }}>{t.result === "WIN" ? "✅" : "🛑"}</span>
+              <span style={{ fontSize: 13, fontWeight: 800, color: T.text }}>{t.instrument}</span>
+              <span style={{ fontSize: 11, fontWeight: 700, color: t.direction === "Long" ? T.green : T.red }}>{t.direction === "Long" ? "▲ Long" : "▼ Short"}</span>
+            </div>
+            <div style={{ fontSize: 12, fontWeight: 700, color: t.result === "WIN" ? T.green : T.red }}>{t.result === "WIN" ? "✓ TP Hit — Trade Won" : "✗ SL Hit — Trade Closed"}</div>
+            <div style={{ fontSize: 10, color: T.textD, marginTop: 3 }}>Exit @ {t.price?.toFixed?.(2) ?? t.price}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* ── RSI Alerts Notifications (Toasts) ── */}
+      <div style={{ position: "fixed", top: 20, right: 20, zIndex: 9999, display: "flex", flexDirection: "column", gap: 10, pointerEvents: "none" }}>
+        {rsiAlerts.map((alert, idx) => (
+          <div key={`${alert.instrument}-${alert.type}-${idx}`} style={{ 
+            pointerEvents: "auto",
+            background: "rgba(17, 24, 39, 0.95)", backdropFilter: "blur(12px)", 
+            borderLeft: `4px solid ${alert.type.includes("BULLISH") ? T.green : T.red}`,
+            padding: "12px 16px", borderRadius: 10, boxShadow: "0 10px 25px -5px rgba(0,0,0,0.5)",
+            border: `1px solid ${T.border}`, width: 300, 
+            animation: "slideIn 0.3s ease-out forwards"
+          }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <div style={{ width: 8, height: 8, borderRadius: 4, background: alert.type.includes("BULLISH") ? T.green : T.red }} />
+                <span style={{ fontSize: 13, fontWeight: 800, color: T.text }}>{alert.instrument}</span>
+                <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 6px", borderRadius: 4, background: T.bg3, color: T.textD }}>{alert.timeframe}</span>
+              </div>
+              <button onClick={() => setRsiAlerts(prev => prev.filter((_, i) => i !== idx))} style={{ background: "none", border: "none", color: T.textD, cursor: "pointer", padding: 0 }}><Trash2 size={12} /></button>
+            </div>
+            <div style={{ fontSize: 12, fontWeight: 600, color: alert.type.includes("BULLISH") ? T.green : T.red, marginBottom: 2 }}>{alert.type.replace(/_/g, " ")}</div>
+            <div style={{ fontSize: 11, color: T.textM, lineHeight: 1.4 }}>{alert.msg}</div>
+            <div style={{ fontSize: 9, color: T.textD, marginTop: 8, textAlign: "right" }}>{new Date(alert.timestamp).toLocaleTimeString()}</div>
+          </div>
+        ))}
+      </div>
+
+      <style>{`
+        @keyframes slideIn {
+          from { transform: translateX(100%); opacity: 0; }
+          to { transform: translateX(0); opacity: 1; }
+        }
+        /* Trade Lab responsive */
+        .lab-stats { grid-template-columns: repeat(4,1fr) !important; }
+        .sig-table-wrap { display: block; }
+        .sig-cards { display: none; }
+        @media(max-width:900px){
+          .lab-stats { grid-template-columns: repeat(2,1fr) !important; }
+          .lab-form-row { grid-template-columns: 1fr 1fr !important; }
+        }
+        @media(max-width:640px){
+          .lab-stats { grid-template-columns: repeat(2,1fr) !important; }
+          .lab-form-row { grid-template-columns: 1fr 1fr !important; }
+          .sig-table-wrap { display: none !important; }
+          .sig-cards { display: block !important; }
+          .asetup-grid { grid-template-columns: repeat(2,1fr) !important; }
+        }
+      `}</style>
+    </div>
   );
 }

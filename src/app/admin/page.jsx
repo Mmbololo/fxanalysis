@@ -37,7 +37,7 @@ export default async function AdminDashboard() {
   const activeSubscriptions = users.filter(u => u.subscriptions[0]?.status === "ACTIVE").length;
 
   const s = {
-    root: { minHeight: "100vh", background: "var(--bg)", color: "var(--text)", fontFamily: "var(--font-maven-pro), sans-serif" },
+    root: { minHeight: "100vh", background: "var(--bg)", color: "var(--text)", fontFamily: "var(--font-geist-mono), monospace" },
     header: { display: "flex", alignItems: "center", gap: 12, padding: "20px 32px", borderBottom: "1px solid var(--border)", background: "var(--bg2)" },
     main: { width: "100%", padding: "28px clamp(16px, 4vw, 32px)", boxSizing: "border-box" },
     card: { background: "var(--bg2)", borderRadius: 12, padding: 20, border: "1px solid var(--border)", overflowX: "auto" },
@@ -108,7 +108,7 @@ export default async function AdminDashboard() {
                           {p.status}
                         </span>
                       </td>
-                      <td style={{ ...s.td, color: "var(--text-d)", fontFamily: "monospace" }}>{p.pesapalTxId || "—"}</td>
+                      <td style={{ ...s.td, color: "var(--text-d)", fontFamily: "var(--font-geist-mono), monospace" }}>{p.pesapalTxId || "—"}</td>
                       <td style={{ ...s.td, color: "var(--text-d)" }}>{new Date(p.createdAt).toLocaleString()}</td>
                     </tr>
                   ))}

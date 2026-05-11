@@ -1,12 +1,12 @@
 import { NextResponse } from "next/server";
-import { sma, ema, rsi, macd, bollingerBands, atr, supportResistance, marketStructure, trendDirection, generateSignal, detectOrderBlocks, detectFVG, detectStructure, detectLiquiditySweeps, smcSetupScore } from "@/lib/technicals";
+import { sma, ema, rsi, rsiArray, macd, bollingerBands, atr, supportResistance, marketStructure, trendDirection, generateSignal, detectOrderBlocks, detectFVG, detectStructure, detectLiquiditySweeps, detectRSIDivergence, smcSetupScore } from "@/lib/technicals";
 
-// ── Server-side cache (5 min TTL, keyed by interval_range) ───────────
+// ── Server-side cache (30 sec TTL, keyed by interval_range) ───────────
 const caches = {};
-const CACHE_TTL = 5 * 60 * 1000;
+const CACHE_TTL = 30 * 1000;
 
 const INSTRUMENTS = {
-  XAUUSD: { symbol: "GC=F", label: "XAU/USD", category: "Commodities", pip: 0.01 },
+  XAUUSD: { symbol: "XAUUSD=X", label: "XAU/USD", category: "Commodities", pip: 0.01 },
   GBPUSD: { symbol: "GBPUSD=X", label: "GBP/USD", category: "Forex", pip: 0.0001 },
   GBPJPY: { symbol: "GBPJPY=X", label: "GBP/JPY", category: "Forex", pip: 0.01 },
   BTCUSD: { symbol: "BTC-USD", label: "BTC/USD", category: "Crypto", pip: 1 },
@@ -132,6 +132,8 @@ export async function GET(req) {
       const sma50 = sma(closes, Math.min(50, closes.length));
       const sma200 = sma(closes, Math.min(200, closes.length));
       const rsiVal = rsi(closes);
+      const fullRsi = rsiArray(closes);
+      const rsiDiv = detectRSIDivergence(closes, highs, lows, fullRsi);
       const macdData = macd(closes);
       const bb = bollingerBands(closes);
       const atrVal = atr(highs, lows, closes);
@@ -211,6 +213,7 @@ export async function GET(req) {
         resistance: srLevels.resistances.map(v => parseFloat(v.toFixed(4))),
         signal,
         smc,
+        rsiDivergence: rsiDiv,
         fullSeries,
         chartData: fullSeries.slice(-30),
       };
@@ -219,7 +222,7 @@ export async function GET(req) {
     // Fetch news for all instruments
     const newsFeeds = await Promise.all([
       fetchNews("EURUSD=X"),
-      fetchNews("GC=F"),
+      fetchNews("XAUUSD=X"),
       fetchNews("BTC-USD"),
       fetchNews("GBPUSD=X"),
     ]);

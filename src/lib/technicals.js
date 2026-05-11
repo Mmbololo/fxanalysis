@@ -49,6 +49,91 @@ export function rsi(closes, period = 14) {
   return 100 - 100 / (1 + rs);
 }
 
+export function rsiArray(closes, period = 14) {
+  if (closes.length < period + 1) return [];
+  const result = new Array(closes.length).fill(null);
+  let gains = 0, losses = 0;
+  for (let i = 1; i <= period; i++) {
+    const diff = closes[i] - closes[i - 1];
+    if (diff > 0) gains += diff;
+    else losses -= diff;
+  }
+  let avgGain = gains / period;
+  let avgLoss = losses / period;
+  
+  result[period] = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
+
+  for (let i = period + 1; i < closes.length; i++) {
+    const diff = closes[i] - closes[i - 1];
+    avgGain = (avgGain * (period - 1) + Math.max(diff, 0)) / period;
+    avgLoss = (avgLoss * (period - 1) + Math.max(-diff, 0)) / period;
+    result[i] = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
+  }
+  return result;
+}
+
+export function detectRSIDivergence(closes, highs, lows, rsiVals, lookback = 30) {
+  if (!rsiVals || rsiVals.length < lookback) return null;
+  
+  const len = closes.length;
+  // Look for pivot lows and pivot highs in price and RSI
+  // A simple 3-bar pivot logic
+  const findPivots = (arr, isHigh) => {
+    const pivots = [];
+    for (let i = len - lookback; i < len - 1; i++) {
+      if (arr[i] === null) continue;
+      if (isHigh) {
+        if (arr[i] > arr[i-1] && arr[i] > arr[i+1]) pivots.push({ val: arr[i], idx: i });
+      } else {
+        if (arr[i] < arr[i-1] && arr[i] < arr[i+1]) pivots.push({ val: arr[i], idx: i });
+      }
+    }
+    return pivots;
+  };
+
+  const pLows = findPivots(lows, false);
+  const pHighs = findPivots(highs, true);
+  
+  const rLows = findPivots(rsiVals, false);
+  const rHighs = findPivots(rsiVals, true);
+
+  if (pLows.length >= 2 && rLows.length >= 2) {
+    // Check bearish divergence (wait, lower lows in price + higher lows in RSI is BULLISH divergence)
+    const latestPLow = pLows[pLows.length - 1];
+    const prevPLow = pLows[pLows.length - 2];
+    const latestRLow = rLows[rLows.length - 1];
+    const prevRLow = rLows[rLows.length - 2];
+    
+    // Allow slight misalignment in index (RSI pivot might be 1 bar off from price pivot)
+    if (Math.abs(latestPLow.idx - latestRLow.idx) <= 2 && Math.abs(prevPLow.idx - prevRLow.idx) <= 2) {
+      if (latestPLow.val < prevPLow.val * 0.999 && latestRLow.val > prevRLow.val + 2) {
+        return { type: "BULLISH_DIVERGENCE", msg: "Bullish Divergence: Price LL, RSI HL" };
+      }
+      if (latestPLow.val > prevPLow.val * 1.001 && latestRLow.val < prevRLow.val - 2) {
+        return { type: "HIDDEN_BULLISH_DIVERGENCE", msg: "Hidden Bullish Convergence: Price HL, RSI LL" };
+      }
+    }
+  }
+
+  if (pHighs.length >= 2 && rHighs.length >= 2) {
+    const latestPHigh = pHighs[pHighs.length - 1];
+    const prevPHigh = pHighs[pHighs.length - 2];
+    const latestRHigh = rHighs[rHighs.length - 1];
+    const prevRHigh = rHighs[rHighs.length - 2];
+    
+    if (Math.abs(latestPHigh.idx - latestRHigh.idx) <= 2 && Math.abs(prevPHigh.idx - prevRHigh.idx) <= 2) {
+      if (latestPHigh.val > prevPHigh.val * 1.001 && latestRHigh.val < prevRHigh.val - 2) {
+        return { type: "BEARISH_DIVERGENCE", msg: "Bearish Divergence: Price HH, RSI LH" };
+      }
+      if (latestPHigh.val < prevPHigh.val * 0.999 && latestRHigh.val > prevRHigh.val + 2) {
+        return { type: "HIDDEN_BEARISH_DIVERGENCE", msg: "Hidden Bearish Convergence: Price LH, RSI HH" };
+      }
+    }
+  }
+
+  return null;
+}
+
 export function macd(closes) {
   const ema12 = emaArray(closes, 12);
   const ema26 = emaArray(closes, 26);
